@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+dist/
+
+# Env
+.env
+
+# Secrets
+save_key.js
+relayer/relayer-keypair.json
+relayer/check_funds.js
+*.key
+*.pem
+
+# Editor
+.vscode/
+.idea/
