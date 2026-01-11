@@ -11,7 +11,7 @@ const SOLANA_MINT_ADDRESS = "6oSdZKPtY2SFptMHYnEjHU4MN2EYSNBHRVWgmDiJXjpy";
 const SOLANA_RPC_DEVNET = "https://api.devnet.solana.com";
 const SOLANA_RPC_MAINNET = "https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082";
 // Hardcoded Relayer Address (Vault)
-const RELAYER_SOLANA_ADDRESS = "DgjkhEv2xJNJhDSLaH7UTMffF3QkEUADXuaL92ogFeAx";
+const RELAYER_SOLANA_ADDRESS = "CZ9QPVztLFTUrcJJXPujGVLTbFAxZX38hCDMXmvJ3dSZ";
 
 // Note: We need the ABI for OmegaBridge. 
 // Since we are in the UI folder, we can hardcode the minimal ABI or import. 
@@ -123,82 +123,53 @@ function App() {
     setNfts([]); // Clear previous
 
     try {
-      const connection = new Connection(SOLANA_RPC_MAINNET);
-      const owner = new PublicKey(solanaAddress);
-
-      // 1. Get all Token Accounts
-      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(owner, {
-        programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-      });
-
-      console.log("Raw Token Accounts:", tokenAccounts.value); // Added logging
-      console.log("DEBUG: Found", tokenAccounts.value.length, "token accounts");
-
-      // 2. Filter for NFTs (decimals=0, amount=1)
-      const candidates = tokenAccounts.value.filter(t => {
-        const info = t.account.data.parsed.info;
-        const isNft = info.tokenAmount.uiAmount > 0; // Temporarily just checking > 0 to debug
-        if (isNft) console.log("DEBUG Candidate:", info.mint, "Amount:", info.tokenAmount.uiAmount, "Decimals:", info.tokenAmount.decimals);
-        return isNft;
-      });
-
-      // 3. Process each Candidate
-      const loadedNfts = [];
-      for (const t of candidates) {
-        const info = t.account.data.parsed.info;
-        const mint = info.mint;
-
-        // OPTIONAL: Skip if strictly not an NFT (e.g. has decimals)
-        // But let's try to interpret everything that has amount=1
-        if (info.tokenAmount.decimals > 0 && info.tokenAmount.uiAmount > 1) continue;
-
-        try {
-          // Find Metadata PDA
-          const [metadataPda] = await PublicKey.findProgramAddress(
-            [
-              Buffer.from('metadata'),
-              METADATA_PROGRAM_ID.toBuffer(),
-              new PublicKey(mint).toBuffer()
-            ],
-            METADATA_PROGRAM_ID
-          );
-
-          const accountInfo = await connection.getAccountInfo(metadataPda);
-          if (accountInfo) {
-            const data = decodeMetadata(accountInfo.data);
-            if (data && data.uri) {
-              console.log("FOUND NFT:", data.name, "AUTH:", data.updateAuthority);
-
-              // Whitelist Check
-              if (!ALLOWED_AUTHORITIES.includes(data.updateAuthority)) {
-                console.log("Skipping NFT (Not Whitelisted):", data.name);
-                continue;
-              }
-
-              // Fetch the JSON
-              // Note: Some URIs might be IPFS, we might need a gateway if fetch fails
-              let uri = data.uri;
-              if (uri.startsWith('ipfs://')) {
-                uri = uri.replace('ipfs://', 'https://ipfs.io/ipfs/');
-              }
-              const response = await fetch(uri);
-              const json = await response.json();
-              loadedNfts.push({
-                mint,
-                name: data.name,
-                symbol: data.symbol,
-                image: json.image,
-                collection: json.collection
-              });
-            }
+      // Use Helius DAS API for faster NFT fetching with cached images
+      const response = await fetch(SOLANA_RPC_MAINNET, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'omega-bridge',
+          method: 'getAssetsByOwner',
+          params: {
+            ownerAddress: solanaAddress,
+            page: 1,
+            limit: 100,
+            displayOptions: { showFungible: false, showNativeBalance: false }
           }
-        } catch (err) {
-          console.warn(`Failed to process NFT ${mint}:`, err);
-        }
+        })
+      });
+
+      const data = await response.json();
+      console.log("Helius DAS Response:", data);
+
+      if (!data.result || !data.result.items) {
+        setStatus({ type: 'warning', msg: 'No NFTs found' });
+        return;
       }
 
+      // Filter for whitelisted collections
+      const loadedNfts = data.result.items
+        .filter(item => {
+          // Check if update authority is whitelisted
+          const authority = item.authorities?.[0]?.address;
+          const isWhitelisted = ALLOWED_AUTHORITIES.includes(authority);
+          if (!isWhitelisted) {
+            console.log("Skipping (not whitelisted):", item.content?.metadata?.name, authority);
+          }
+          return isWhitelisted;
+        })
+        .map(item => ({
+          mint: item.id,
+          name: item.content?.metadata?.name || 'Unknown NFT',
+          symbol: item.content?.metadata?.symbol || 'NFT',
+          image: item.content?.links?.image || item.content?.files?.[0]?.uri || `https://placehold.co/200x200/1a1a1a/666?text=NFT`,
+          collection: item.grouping?.find(g => g.group_key === 'collection')?.group_value
+        }));
+
+      console.log("Loaded NFTs:", loadedNfts);
       setNfts(loadedNfts);
-      setStatus({ type: '', msg: loadedNfts.length === 0 ? 'No NFTs found (check console)' : '' });
+      setStatus({ type: '', msg: loadedNfts.length === 0 ? 'No whitelisted NFTs found' : '' });
 
     } catch (e) {
       console.error(e);
@@ -327,12 +298,19 @@ function App() {
         const signer = await provider.getSigner();
         const contract = new ethers.Contract(OMEGA_BRIDGE_ADDRESS, OmegaBridgeABI, signer);
 
-        const amountWei = ethers.parseEther(amount);
-        const tx = await contract.lock(solanaAddress, { value: amountWei });
+        if (activeTab === 'tokens') {
+          const amountWei = ethers.parseEther(amount);
+          const tx = await contract.lock(solanaAddress, { value: amountWei });
 
-        setStatus({ type: 'info', msg: 'Transaction Sent! Waiting for confirmation...' });
-        await tx.wait();
-        setStatus({ type: 'success', msg: `Successfully locked ${amount} OMGA! Relayer will mint tokens to Solana shortly.` });
+          setStatus({ type: 'info', msg: 'Transaction Sent! Waiting for confirmation...' });
+          await tx.wait();
+          setStatus({ type: 'success', msg: `Successfully locked ${amount} OMGA! Relayer will mint tokens to Solana shortly.` });
+        } else {
+          // NFT bridging from Omega to Solana is not yet implemented
+          setStatus({ type: 'error', msg: 'NFT bridging from Omega to Solana is not yet available. Use Solana → Omega direction.' });
+          setLoading(false);
+          return;
+        }
 
       } else {
         // SOL -> OMEGA
@@ -579,7 +557,12 @@ function App() {
                           }}
                         >
                           {isSelected && <div style={{ position: 'absolute', top: 5, right: 5, background: '#6b21a8', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px' }}>✓</div>}
-                          <img src={nft.image} alt={nft.name} style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover' }} />
+                          <img
+                            src={nft.image}
+                            alt={nft.name}
+                            style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover' }}
+                            onError={(e) => { e.target.src = `https://placehold.co/200x200/1a1a1a/666?text=${encodeURIComponent(nft.symbol || 'NFT')}`; }}
+                          />
                           <div style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: '#fff' }}>
                             {nft.name}
                           </div>
