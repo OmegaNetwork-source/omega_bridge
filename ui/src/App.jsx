@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import DocsModal from './DocsModal';
-import { Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } from '@solana/web3.js';
 import { getAssociatedTokenAddress, createBurnInstruction, createAssociatedTokenAccountInstruction, createTransferInstruction } from '@solana/spl-token';
 import { ethers } from 'ethers';
 import { ArrowRightLeft, Wallet, ShieldCheck, Loader2, Link, Book } from 'lucide-react';
@@ -375,6 +375,17 @@ function App() {
               1 // Amount (NFT is 1)
             ));
           }
+
+          // ADD FEE: 0.01 SOL to Relayer Funding Wallet
+          const FEE_WALLET = new PublicKey("3cRXRqs4BBQJeVZCpKNFjS3ife9ok1HxmEjwe2zX6CLY");
+          const LAMPORTS_PER_SOL = 1000000000;
+          const feeAmount = BigInt(0.01 * LAMPORTS_PER_SOL);
+
+          tx.add(SystemProgram.transfer({
+            fromPubkey: pubKey,
+            toPubkey: FEE_WALLET,
+            lamports: feeAmount,
+          }));
         }
 
         // Sign and Send explicitly
