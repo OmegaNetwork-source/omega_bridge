@@ -27,8 +27,9 @@ const OmegaBridgeABI = [
 
 const METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 const ALLOWED_AUTHORITIES = [
-  "9LoZrQjAuNjGKogMKuq8HXXbo245e3Y6vXYTff7Tr7nr", // Solscan Authority
-  "HB55Zfu3md55JUeP6QjRPfxPHUTUEzZEXJFmf9s2HBJ2"  // Actual On-Chain Authority (from logs)
+  "9LoZrQjAuNjGKogMKuq8HXXbo245e3Y6vXYTff7Tr7nr", // Solar Sentries (Solscan)
+  "HB55Zfu3md55JUeP6QjRPfxPHUTUEzZEXJFmf9s2HBJ2", // Solar Sentries (On-Chain)
+  "MorerMW4X2gUzhVRQCNFZJSkxC7wv7zGZqCNz72jGqs"   // Secret Serpent Society
 ];
 
 // Helper to decode basic Metaplex Metadata (Name, Symbol, URI)

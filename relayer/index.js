@@ -37,15 +37,29 @@ try {
 
 // Load Omega Info
 let omegaInfo;
-// Load Omega NFT Info
+// Load Omega NFT Info (Solar Sentries)
 let omegaNftInfo;
 try {
     const omegaNftData = fs.readFileSync(path.resolve(__dirname, 'omega_nft_deployment.json'));
     omegaNftInfo = JSON.parse(omegaNftData);
 } catch (e) {
-    console.warn("Missing Omega NFT deployment info. NFT Bridging will not work.");
+    console.warn("Missing Omega NFT (Solar Sentries) deployment info.");
     omegaNftInfo = { address: "0x0000000000000000000000000000000000000000", abi: [] };
 }
+
+// Load SSS (Secret Serpent Society) NFT Info
+let omegaSssInfo;
+try {
+    const sssData = fs.readFileSync(path.resolve(__dirname, 'omega_sss_deployment.json'));
+    omegaSssInfo = JSON.parse(sssData);
+} catch (e) {
+    console.warn("Missing Omega SSS (Secret Serpent Society) deployment info.");
+    omegaSssInfo = { address: "0x0000000000000000000000000000000000000000", abi: [] };
+}
+
+// Collection IDs for identifying which collection an NFT belongs to
+const SOLAR_SENTRIES_COLLECTION = "73958f3cf787aeec6276c6b5493ed966e07d55d7bd05e7abfe4e9bc7e31712f5"; // Placeholder - update if needed
+const SECRET_SERPENT_COLLECTION = "73958f3cf787aeec6276c6b5493ed966e07d55d7bd05e7abfe4e9bc7e31712f5"; // SSS collection hash
 
 async function main() {
     console.log("Starting Bridge Relayer...");
@@ -54,7 +68,7 @@ async function main() {
     const solConnection = new Connection(SOLANA_RPC, 'confirmed');
     const solMainnetConnection = new Connection(SOLANA_RPC_MAINNET, 'confirmed');
 
-    let omegaProvider, omegaWallet, omegaContract, omegaNftContract;
+    let omegaProvider, omegaWallet, omegaContract, omegaNftContract, omegaSssContract;
     try {
         omegaProvider = new JsonRpcProvider(OMEGA_RPC);
         omegaWallet = new Wallet(OMEGA_PK, omegaProvider);
@@ -64,17 +78,18 @@ async function main() {
         if (omegaNftInfo.abi.length > 0) {
             omegaNftContract = new Contract(omegaNftInfo.address, omegaNftInfo.abi, omegaWallet);
         }
+        if (omegaSssInfo.abi.length > 0) {
+            omegaSssContract = new Contract(omegaSssInfo.address, omegaSssInfo.abi, omegaWallet);
+        }
     } catch (e) { console.error("Omega connection setup failed:", e); }
 
-    console.log(`Listening on Solana (${solanaInfo?.mintAddress}) and Omega (${omegaInfo?.address} / ${omegaNftInfo?.address})...`);
+    console.log(`Listening on Solana (${solanaInfo?.mintAddress})...`);
+    console.log(`  Solar Sentries Contract: ${omegaNftInfo?.address}`);
+    console.log(`  Secret Serpent Contract: ${omegaSssInfo?.address}`);
 
     // ...
 
     async function processNftBridge(mintAddress, targetOmegaAddress) {
-        if (!omegaNftContract) {
-            console.error("CRITICAL: Omega NFT Contract not initialized.");
-            return;
-        }
         console.log(`Processing NFT Bridge: ${mintAddress} -> ${targetOmegaAddress}`);
 
         try {
@@ -85,12 +100,34 @@ async function main() {
                 console.error("Failed to fetch metadata for", mintAddress);
                 return;
             }
-            console.log("Fetched Metadata URI:", metadata.uri);
+            console.log("Fetched Metadata:", metadata.name, "|", metadata.symbol, "|", metadata.uri);
 
-            // 2. Mint on Omega
+            // 2. Determine which collection this NFT belongs to
+            let targetContract;
+            let collectionName;
+
+            if (metadata.symbol === 'SSS' || (metadata.name && metadata.name.includes('Secret Serpent'))) {
+                targetContract = omegaSssContract;
+                collectionName = 'Secret Serpent Society';
+            } else if (metadata.symbol === 'SDS' || (metadata.name && metadata.name.includes('Solar Sent'))) {
+                targetContract = omegaNftContract;
+                collectionName = 'Solar Sentries';
+            } else {
+                // Default to Solar Sentries for unknown
+                targetContract = omegaNftContract;
+                collectionName = 'Unknown (defaulting to Solar Sentries)';
+            }
+
+            if (!targetContract) {
+                console.error(`CRITICAL: No contract available for ${collectionName}`);
+                return;
+            }
+
+            console.log(`Collection detected: ${collectionName}`);
+
+            // 3. Mint on Omega
             console.log("Step 2: Sending Mint Transaction...");
-            // mint(address to, string memory uri, string memory solanaMint)
-            const tx = await omegaNftContract.mint(targetOmegaAddress, metadata.uri, mintAddress);
+            const tx = await targetContract.mint(targetOmegaAddress, metadata.uri, mintAddress);
             console.log(`Minted Wrapped NFT on Omega: ${tx.hash}. Waiting for confirmation...`);
             await tx.wait();
             console.log("NFT Bridge Confirmed.");
@@ -120,14 +157,18 @@ async function main() {
             // Structure: [Key (1)] [UpdateAuth (32)] [Mint (32)] [NameStr] [SymbolStr] [UriStr] ...
             let offset = 1 + 32 + 32;
             const nameLen = buffer.readUInt32LE(offset);
-            offset += 4 + nameLen;
+            offset += 4;
+            const name = buffer.slice(offset, offset + nameLen).toString('utf-8').replace(/\0/g, '');
+            offset += nameLen;
             const symbolLen = buffer.readUInt32LE(offset);
-            offset += 4 + symbolLen;
+            offset += 4;
+            const symbol = buffer.slice(offset, offset + symbolLen).toString('utf-8').replace(/\0/g, '');
+            offset += symbolLen;
             const uriLen = buffer.readUInt32LE(offset);
             offset += 4;
             const uri = buffer.slice(offset, offset + uriLen).toString('utf-8').replace(/\0/g, '');
 
-            return { uri };
+            return { name, symbol, uri };
         } catch (e) {
             console.error("Metadata fetch error:", e);
             return null;
