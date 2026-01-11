@@ -1,17 +1,36 @@
 # Dependencies
 node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
 dist/
+build/
 
-# Env
+# Environment variables (IMPORTANT - contains private keys!)
 .env
+*.env
+relayer/.env
 
-# Secrets
-save_key.js
-relayer/relayer-keypair.json
-relayer/check_funds.js
-*.key
-*.pem
+# Logs
+*.log
+relayer/*.log
+npm-debug.log*
 
-# Editor
+# IDE
 .vscode/
 .idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keypairs (NEVER commit these!)
+relayer/relayer-keypair.json
+*.json.bak
+
+# Temp files
+manual_bridge_nft.js
+mint_now.js
+check_omega_nft.js
+save_key.js

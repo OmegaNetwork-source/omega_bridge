@@ -1,13 +1,15 @@
+const path = require('path');
 require('dotenv').config();
 const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
 const { mintTo, getOrCreateAssociatedTokenAccount } = require('@solana/spl-token');
 const { ethers, JsonRpcProvider, Wallet, Contract } = require('ethers');
 const fs = require('fs');
-const path = require('path');
 
 // --- Configuration ---
 const SOLANA_RPC = 'https://api.devnet.solana.com';
+const SOLANA_RPC_MAINNET = "https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082";
 const OMEGA_RPC = "https://0x4e454228.rpc.aurora-cloud.dev"; // Omega Network RPC
+const OMEGA_PK = process.env.OMEGA_PRIVATE_KEY;
 
 // Load Keys
 let relayerSolana; // Keypair
@@ -27,36 +29,142 @@ try {
 
 // Load Omega Info
 let omegaInfo;
+// Load Omega NFT Info
+let omegaNftInfo;
 try {
-    const omegaData = fs.readFileSync(path.resolve(__dirname, 'omega_deployment.json'));
-    omegaInfo = JSON.parse(omegaData);
+    const omegaNftData = fs.readFileSync(path.resolve(__dirname, 'omega_nft_deployment.json'));
+    omegaNftInfo = JSON.parse(omegaNftData);
 } catch (e) {
-    console.warn("Missing Omega deployment info (run omega/deploy.js first). Using placeholders.");
-    omegaInfo = { address: "0x0000000000000000000000000000000000000000", abi: [] };
+    console.warn("Missing Omega NFT deployment info. NFT Bridging will not work.");
+    omegaNftInfo = { address: "0x0000000000000000000000000000000000000000", abi: [] };
 }
-
-// Omega Private Key (Env) or Placeholder
-const OMEGA_PK = process.env.OMEGA_PRIVATE_KEY || "0x0000000000000000000000000000000000000000000000000000000012345678";
-
 
 async function main() {
     console.log("Starting Bridge Relayer...");
 
     // 1. Setup Connections
     const solConnection = new Connection(SOLANA_RPC, 'confirmed');
+    const solMainnetConnection = new Connection(SOLANA_RPC_MAINNET, 'confirmed');
 
-    let omegaProvider, omegaWallet, omegaContract;
+    let omegaProvider, omegaWallet, omegaContract, omegaNftContract;
     try {
         omegaProvider = new JsonRpcProvider(OMEGA_RPC);
         omegaWallet = new Wallet(OMEGA_PK, omegaProvider);
-        if (omegaInfo.abi.length > 0) {
+        if (omegaInfo && omegaInfo.abi && omegaInfo.abi.length > 0) {
             omegaContract = new Contract(omegaInfo.address, omegaInfo.abi, omegaWallet);
         }
-    } catch (e) { console.log("Omega connection setup failed (check keys)."); }
+        if (omegaNftInfo.abi.length > 0) {
+            omegaNftContract = new Contract(omegaNftInfo.address, omegaNftInfo.abi, omegaWallet);
+        }
+    } catch (e) { console.error("Omega connection setup failed:", e); }
 
-    console.log(`Listening on Solana (${solanaInfo?.mintAddress}) and Omega (${omegaInfo?.address})...`);
+    console.log(`Listening on Solana (${solanaInfo?.mintAddress}) and Omega (${omegaInfo?.address} / ${omegaNftInfo?.address})...`);
 
-    // --- Solana Listener (Burn -> Release on Omega) ---
+    // ...
+
+    async function processNftBridge(mintAddress, targetOmegaAddress) {
+        if (!omegaNftContract) {
+            console.error("CRITICAL: Omega NFT Contract not initialized.");
+            return;
+        }
+        console.log(`Processing NFT Bridge: ${mintAddress} -> ${targetOmegaAddress}`);
+
+        try {
+            // 1. Fetch Metadata from Solana (MAINNET)
+            console.log("Step 1: Fetching Solana Metadata...");
+            const metadata = await fetchSolanaMetadata(solMainnetConnection, mintAddress);
+            if (!metadata) {
+                console.error("Failed to fetch metadata for", mintAddress);
+                return;
+            }
+            console.log("Fetched Metadata URI:", metadata.uri);
+
+            // 2. Mint on Omega
+            console.log("Step 2: Sending Mint Transaction...");
+            // mint(address to, string memory uri, string memory solanaMint)
+            const tx = await omegaNftContract.mint(targetOmegaAddress, metadata.uri, mintAddress);
+            console.log(`Minted Wrapped NFT on Omega: ${tx.hash}. Waiting for confirmation...`);
+            await tx.wait();
+            console.log("NFT Bridge Confirmed.");
+
+        } catch (e) {
+            console.error("Failed to bridge NFT:", e);
+        }
+    }
+
+    const METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+
+    async function fetchSolanaMetadata(connection, mint) {
+        try {
+            const [metadataPda] = await PublicKey.findProgramAddress(
+                [
+                    Buffer.from('metadata'),
+                    METADATA_PROGRAM_ID.toBuffer(),
+                    new PublicKey(mint).toBuffer()
+                ],
+                METADATA_PROGRAM_ID
+            );
+            const info = await connection.getAccountInfo(metadataPda);
+            if (!info) return null;
+
+            // Minimal Decode
+            const buffer = info.data;
+            // Structure: [Key (1)] [UpdateAuth (32)] [Mint (32)] [NameStr] [SymbolStr] [UriStr] ...
+            let offset = 1 + 32 + 32;
+            const nameLen = buffer.readUInt32LE(offset);
+            offset += 4 + nameLen;
+            const symbolLen = buffer.readUInt32LE(offset);
+            offset += 4 + symbolLen;
+            const uriLen = buffer.readUInt32LE(offset);
+            offset += 4;
+            const uri = buffer.slice(offset, offset + uriLen).toString('utf-8').replace(/\0/g, '');
+
+            return { uri };
+        } catch (e) {
+            console.error("Metadata fetch error:", e);
+            return null;
+        }
+    }
+
+    // --- Solana Listener (NFT Deposits -> Relayer Wallet) ---
+    if (relayerSolana) {
+        const relayerPubkey = relayerSolana.publicKey;
+        console.log(`Starting NFT Listener on Relayer Wallet: ${relayerPubkey.toString()}...`);
+        console.log("Connecting to Mainnet RPC:", SOLANA_RPC_MAINNET);
+
+        let lastNftSignature = null;
+        setInterval(async () => {
+            try {
+                // Listen on MAINNET
+                const signatures = await solMainnetConnection.getSignaturesForAddress(relayerPubkey, { limit: 100, until: lastNftSignature });
+
+                for (const sigInfo of signatures.reverse()) {
+                    if (sigInfo.err) continue;
+
+                    try {
+                        const tx = await solMainnetConnection.getTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 });
+                        if (!tx) continue;
+
+                        const memo = extractMemo(tx);
+                        const transfer = extractIncomingTransfer(tx, relayerPubkey);
+
+                        if (transfer && memo) {
+                            console.log(`[NFT Bridge] Deposit Detected: ${transfer.mint} -> ${memo}`);
+                            await processNftBridge(transfer.mint, memo);
+                        }
+
+                        // Update last processed ONLY after success or attempted processing
+                        lastNftSignature = sigInfo.signature;
+
+                    } catch (err) {
+                        console.error("Error processing tx:", sigInfo.signature, err.message);
+                        // Do NOT update lastNftSignature, so we retry next time (if it's the blocking one)
+                        // But since we iterate multiple, this is complex. Simpler is just log.
+                    }
+                }
+            } catch (e) { console.error("Error polling NFT deposits:", e.message); }
+        }, 5000);
+    }
     if (solanaInfo) {
         const mintPubkey = new PublicKey(solanaInfo.mintAddress);
 
@@ -101,6 +209,8 @@ async function main() {
         }, 5000); // Poll every 5 seconds
     }
 
+
+
     // --- Omega Listener (Lock -> Mint on Solana) ---
     if (omegaContract) {
         console.log("Starting Omega Event Listener...");
@@ -110,7 +220,25 @@ async function main() {
         });
     }
 
-    // --- Handlers ---
+    // --- Helpers ---
+    function extractIncomingTransfer(tx, targetPubkey) {
+        if (!tx.meta || !tx.meta.postTokenBalances || !tx.meta.preTokenBalances) return null;
+
+        const targetStr = targetPubkey.toString();
+
+        for (const post of tx.meta.postTokenBalances) {
+            if (post.owner === targetStr) {
+                const pre = tx.meta.preTokenBalances.find(p => p.accountIndex === post.accountIndex);
+                const preAmount = pre ? BigInt(pre.uiTokenAmount.amount) : 0n;
+                const postAmount = BigInt(post.uiTokenAmount.amount);
+
+                if (postAmount > preAmount && post.uiTokenAmount.decimals === 0 && (postAmount - preAmount) === 1n) {
+                    return { mint: post.mint, amount: 1 };
+                }
+            }
+        }
+        return null;
+    }
 
     async function releaseOnOmega(targetAddress, amountWei) {
         if (!omegaContract) return;
@@ -182,10 +310,25 @@ function extractMemo(tx) {
     for (const ix of tx.transaction.message.instructions) {
         // Check programId index mapping
         const progIdKey = tx.transaction.message.accountKeys[ix.programIdIndex];
-        if (progIdKey.toString() === "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo") {
+        const progIdStr = progIdKey.toString();
+
+        if (tx.transaction.signatures[0].startsWith("5pt3")) {
+            console.log(`[DEBUG 5pt3] Instruction Program: ${progIdStr}`);
+        }
+
+        // Support both Memo v1 and v2
+        if (progIdStr === "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo" ||
+            progIdStr === "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcQb") {
+
             let dataBuffer = ix.data;
             if (typeof ix.data === 'string') {
-                dataBuffer = bs58.decode(ix.data);
+                try {
+                    dataBuffer = bs58.decode(ix.data);
+                } catch (e) {
+                    // if decode fails, maybe it's not base58? ignore.
+                    console.log("Memo decode failed", e);
+                    continue;
+                }
             }
             return new TextDecoder().decode(dataBuffer);
         }

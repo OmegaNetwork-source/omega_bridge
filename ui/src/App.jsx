@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import DocsModal from './DocsModal';
 import { Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
-import { createBurnInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
+import { getAssociatedTokenAddress, createBurnInstruction, createAssociatedTokenAccountInstruction, createTransferInstruction } from '@solana/spl-token';
 import { ethers } from 'ethers';
 import { ArrowRightLeft, Wallet, ShieldCheck, Loader2, Link, Book } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 // Configuration
 const SOLANA_MINT_ADDRESS = "6oSdZKPtY2SFptMHYnEjHU4MN2EYSNBHRVWgmDiJXjpy";
+const SOLANA_RPC_DEVNET = "https://api.devnet.solana.com";
+const SOLANA_RPC_MAINNET = "https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082";
+// Hardcoded Relayer Address (Vault)
+const RELAYER_SOLANA_ADDRESS = "DgjkhEv2xJNJhDSLaH7UTMffF3QkEUADXuaL92ogFeAx";
+
 // Note: We need the ABI for OmegaBridge. 
 // Since we are in the UI folder, we can hardcode the minimal ABI or import. 
 // For simplicity in this demo, I'll inline the minimal ABI.
@@ -20,21 +25,67 @@ const OmegaBridgeABI = [
   "function release(address payable recipient, uint256 amount) external"
 ];
 
+const METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+const ALLOWED_AUTHORITIES = [
+  "9LoZrQjAuNjGKogMKuq8HXXbo245e3Y6vXYTff7Tr7nr", // Solscan Authority
+  "HB55Zfu3md55JUeP6QjRPfxPHUTUEzZEXJFmf9s2HBJ2"  // Actual On-Chain Authority (from logs)
+];
+
+// Helper to decode basic Metaplex Metadata (Name, Symbol, URI)
+// Structure: [Key (1)] [UpdateAuth (32)] [Mint (32)] [NameStr] [SymbolStr] [UriStr] ...
+function decodeMetadata(buffer) {
+  try {
+    const updateAuthority = new PublicKey(buffer.slice(1, 33)).toString();
+    const mint = new PublicKey(buffer.slice(33, 65)).toString();
+
+    let offset = 1 + 32 + 32; // Skip Key, UpdateAuth, Mint
+
+    // Read Name
+    const nameLen = buffer.readUInt32LE(offset);
+    offset += 4;
+    const name = buffer.slice(offset, offset + nameLen).toString('utf-8').replace(/\0/g, ''); // Remove null bytes
+    offset += nameLen;
+
+    // Read Symbol
+    const symbolLen = buffer.readUInt32LE(offset);
+    offset += 4;
+    const symbol = buffer.slice(offset, offset + symbolLen).toString('utf-8').replace(/\0/g, '');
+    offset += symbolLen;
+
+    // Read URI
+    const uriLen = buffer.readUInt32LE(offset);
+    offset += 4;
+    const uri = buffer.slice(offset, offset + uriLen).toString('utf-8').replace(/\0/g, '');
+
+    return { name, symbol, uri, updateAuthority, mint };
+  } catch (e) {
+    console.error("Failed to decode metadata", e);
+    return null;
+  }
+}
+
 function App() {
   // State
   const [solanaAddress, setSolanaAddress] = useState(null);
   const [omegaAddress, setOmegaAddress] = useState(null);
   const [amount, setAmount] = useState('');
-  const [direction, setDirection] = useState('OMEGA_TO_SOL'); // 'OMEGA_TO_SOL' or 'SOL_TO_OMEGA'
+  const [direction, setDirection] = useState('OMEGA_TO_SOL');
   const [status, setStatus] = useState({ type: '', msg: '' });
   const [loading, setLoading] = useState(false);
   const [balance, setBalance] = useState('--');
   const [isDocsOpen, setIsDocsOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('tokens');
+  const [selectedNfts, setSelectedNfts] = useState([]); // Array for Bulk
+  const [nfts, setNfts] = useState([]);
 
   // Fetch Logic
   const fetchBalances = async () => {
     try {
+      // ONLY fetch token balances if we are in 'tokens' tab (Devnet)
+      if (activeTab !== 'tokens') return;
+
       if (direction === 'OMEGA_TO_SOL' && omegaAddress && window.ethereum) {
+        // ... (existing logic) ...
         let provider;
         if (window.ethereum.providers) {
           const found = window.ethereum.providers.find(p => p.isMetaMask);
@@ -43,24 +94,19 @@ function App() {
         } else {
           provider = new ethers.BrowserProvider(window.ethereum);
         }
-
         const bal = await provider.getBalance(omegaAddress);
         setBalance(ethers.formatEther(bal));
       }
       else if (direction === 'SOL_TO_OMEGA' && solanaAddress && window.solana) {
-        const connection = new Connection("https://api.devnet.solana.com");
+        // ... (existing logic) ...
+        const connection = new Connection(SOLANA_RPC_DEVNET);
         const mint = new PublicKey(SOLANA_MINT_ADDRESS);
         const owner = new PublicKey(solanaAddress);
-
-        // Get SPL Balance (Wrapped Omega)
         try {
           const accounts = await connection.getParsedTokenAccountsByOwner(owner, { mint: mint });
-          if (accounts.value.length > 0) {
-            setBalance(accounts.value[0].account.data.parsed.info.tokenAmount.uiAmountString);
-          } else {
-            setBalance('0.00');
-          }
-        } catch (e) { setBalance('0.00'); }
+          if (accounts.value.length > 0) setBalance(accounts.value[0].account.data.parsed.info.tokenAmount.uiAmountString);
+          else setBalance('0.00');
+        } catch { setBalance('0.00'); }
       } else {
         setBalance('--');
       }
@@ -70,11 +116,126 @@ function App() {
     }
   };
 
+  const fetchNFTs = async () => {
+    if (!solanaAddress) return;
+    setStatus({ type: 'info', msg: 'Fetching NFTs from Mainnet...' });
+    setNfts([]); // Clear previous
+
+    try {
+      const connection = new Connection(SOLANA_RPC_MAINNET);
+      const owner = new PublicKey(solanaAddress);
+
+      // 1. Get all Token Accounts
+      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(owner, {
+        programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+      });
+
+      console.log("Raw Token Accounts:", tokenAccounts.value); // Added logging
+      console.log("DEBUG: Found", tokenAccounts.value.length, "token accounts");
+
+      // 2. Filter for NFTs (decimals=0, amount=1)
+      const candidates = tokenAccounts.value.filter(t => {
+        const info = t.account.data.parsed.info;
+        const isNft = info.tokenAmount.uiAmount > 0; // Temporarily just checking > 0 to debug
+        if (isNft) console.log("DEBUG Candidate:", info.mint, "Amount:", info.tokenAmount.uiAmount, "Decimals:", info.tokenAmount.decimals);
+        return isNft;
+      });
+
+      // 3. Process each Candidate
+      const loadedNfts = [];
+      for (const t of candidates) {
+        const info = t.account.data.parsed.info;
+        const mint = info.mint;
+
+        // OPTIONAL: Skip if strictly not an NFT (e.g. has decimals)
+        // But let's try to interpret everything that has amount=1
+        if (info.tokenAmount.decimals > 0 && info.tokenAmount.uiAmount > 1) continue;
+
+        try {
+          // Find Metadata PDA
+          const [metadataPda] = await PublicKey.findProgramAddress(
+            [
+              Buffer.from('metadata'),
+              METADATA_PROGRAM_ID.toBuffer(),
+              new PublicKey(mint).toBuffer()
+            ],
+            METADATA_PROGRAM_ID
+          );
+
+          const accountInfo = await connection.getAccountInfo(metadataPda);
+          if (accountInfo) {
+            const data = decodeMetadata(accountInfo.data);
+            if (data && data.uri) {
+              console.log("FOUND NFT:", data.name, "AUTH:", data.updateAuthority);
+
+              // Whitelist Check
+              if (!ALLOWED_AUTHORITIES.includes(data.updateAuthority)) {
+                console.log("Skipping NFT (Not Whitelisted):", data.name);
+                continue;
+              }
+
+              // Fetch the JSON
+              // Note: Some URIs might be IPFS, we might need a gateway if fetch fails
+              let uri = data.uri;
+              if (uri.startsWith('ipfs://')) {
+                uri = uri.replace('ipfs://', 'https://ipfs.io/ipfs/');
+              }
+              const response = await fetch(uri);
+              const json = await response.json();
+              loadedNfts.push({
+                mint,
+                name: data.name,
+                symbol: data.symbol,
+                image: json.image,
+                collection: json.collection
+              });
+            }
+          }
+        } catch (err) {
+          console.warn(`Failed to process NFT ${mint}:`, err);
+        }
+      }
+
+      setNfts(loadedNfts);
+      setStatus({ type: '', msg: loadedNfts.length === 0 ? 'No NFTs found (check console)' : '' });
+
+    } catch (e) {
+      console.error(e);
+      setStatus({ type: 'error', msg: 'Failed to fetch NFTs' });
+    }
+  };
+
   useEffect(() => {
-    fetchBalances();
-    const interval = setInterval(fetchBalances, 10000); // Poll every 10s
+    if (activeTab === 'tokens') fetchBalances();
+    if (activeTab === 'nfts') fetchNFTs();
+
+    const interval = setInterval(() => {
+      if (activeTab === 'tokens') fetchBalances();
+    }, 10000);
     return () => clearInterval(interval);
-  }, [omegaAddress, solanaAddress, direction]);
+  }, [omegaAddress, solanaAddress, direction, activeTab]);
+
+  // Tab Handler
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    // Clearing previous state when switching
+    setStatus({ type: '', msg: '' });
+    if (tab === 'nfts') {
+      fetchNFTs();
+      setBalance('--'); // Hide token balance
+      setSelectedNfts([]); // Clear selected NFTs when switching tabs
+    } else {
+      fetchBalances();
+    }
+  };
+
+  const toggleNftSelection = (nft) => {
+    if (selectedNfts.find(n => n.mint === nft.mint)) {
+      setSelectedNfts(selectedNfts.filter(n => n.mint !== nft.mint));
+    } else {
+      setSelectedNfts([...selectedNfts, nft]);
+    }
+  };
 
   // Connection Handlers
   const connectPhantom = async () => {
@@ -142,9 +303,11 @@ function App() {
 
   // Bridge Logic
   const handleBridge = async () => {
-    if (!amount || parseFloat(amount) <= 0) return alert("Invalid amount");
+    if (activeTab === 'tokens' && (!amount || parseFloat(amount) <= 0)) return alert("Invalid amount");
+    if (activeTab === 'nfts' && selectedNfts.length === 0) return alert("Select at least one NFT");
+
     setLoading(true);
-    setStatus({ type: 'info', msg: 'Processing transaction...' });
+    setStatus({ type: 'info', msg: 'Processing... Please approve in wallet.' });
 
     try {
       if (direction === 'OMEGA_TO_SOL') {
@@ -175,41 +338,88 @@ function App() {
         if (!solanaAddress) throw new Error("Connect Solana Wallet");
         if (!omegaAddress) throw new Error("Connect Omega Wallet (destination)");
 
-        const connection = new Connection("https://api.devnet.solana.com", 'confirmed');
+        // USE DYNAMIC RPC
+        const rpcUrl = activeTab === 'nfts' ? SOLANA_RPC_MAINNET : SOLANA_RPC_DEVNET;
+        const connection = new Connection(rpcUrl, 'confirmed');
         const pubKey = new PublicKey(solanaAddress);
-        const mintKey = new PublicKey(SOLANA_MINT_ADDRESS);
-        const amountLamports = BigInt(Math.floor(parseFloat(amount) * 10 ** 9));
-
-        const ata = await getAssociatedTokenAddress(mintKey, pubKey);
-
-        const tx = new Transaction();
         const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+        const tx = new Transaction();
         tx.recentBlockhash = blockhash;
         tx.feePayer = pubKey;
 
-        // Memo Instruction (Target Omega Address)
+        // Common Memo (Target Omega Address)
         tx.add(new TransactionInstruction({
           keys: [{ pubkey: pubKey, isSigner: true, isWritable: true }],
           data: Buffer.from(omegaAddress, 'utf-8'),
           programId: new PublicKey("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo")
         }));
 
-        // Burn Instruction
-        tx.add(createBurnInstruction(ata, mintKey, pubKey, amountLamports));
+        if (activeTab === 'tokens') {
+          const mintKey = new PublicKey(SOLANA_MINT_ADDRESS);
+          const amountLamports = BigInt(Math.floor(parseFloat(amount) * 10 ** 9));
+
+          const ata = await getAssociatedTokenAddress(mintKey, pubKey);
+
+          // Burn Instruction
+          tx.add(createBurnInstruction(ata, mintKey, pubKey, amountLamports));
+
+        } else {
+          // NFT Logic (Batch Transfer)
+          setStatus({ type: 'info', msg: `Preparing transfer for ${selectedNfts.length} NFTs...` });
+
+          const relayerKey = new PublicKey(RELAYER_SOLANA_ADDRESS);
+
+          for (const nft of selectedNfts) {
+            const mintKey = new PublicKey(nft.mint);
+            // User's ATA
+            const userAta = await getAssociatedTokenAddress(mintKey, pubKey);
+            // Relayer's ATA (Destination)
+            const relayerAta = await getAssociatedTokenAddress(mintKey, relayerKey);
+
+            // Check if Relayer ATA exists, if not, create it (User pays rent - ~0.002 SOL)
+            // This is necessary because Relayer wallet typically won't have ATAs for every random NFT upfront.
+            const info = await connection.getAccountInfo(relayerAta);
+            if (!info) {
+              tx.add(createAssociatedTokenAccountInstruction(
+                pubKey, // Payer
+                relayerAta, // Associated Token Account
+                relayerKey, // Owner
+                mintKey // Mint
+              ));
+            }
+
+            // Transfer Instruction
+            tx.add(createTransferInstruction(
+              userAta, // Source
+              relayerAta, // Destination
+              pubKey, // Owner
+              1 // Amount (NFT is 1)
+            ));
+          }
+        }
 
         // Sign and Send explicitly
         const signedTx = await window.solana.signTransaction(tx);
         const signature = await connection.sendRawTransaction(signedTx.serialize());
 
-        setStatus({ type: 'info', msg: `Tx Sent: ${signature.slice(0, 8)}... Waiting for confirmation...` });
+        setStatus({ type: 'info', msg: `Tx Sent. Confirming...`, link: `https://solscan.io/tx/${signature}` });
 
         await connection.confirmTransaction({
           blockhash,
           lastValidBlockHeight,
           signature
+        }, 'finalized');
+
+        setStatus({
+          type: 'success',
+          msg: activeTab === 'tokens' ? 'Burned Tokens! Relayer will release OMGA shortly.' : `Bridge Initiated! Relayer will mint ${selectedNfts.length} NFTs on Omega.`,
+          link: `https://solscan.io/tx/${signature}`
         });
 
-        setStatus({ type: 'success', msg: `Burned Tokens! Relayer will release OMGA shortly.` });
+        if (activeTab === 'nfts') {
+          setSelectedNfts([]);
+          setTimeout(fetchNFTs, 5000); // Storage refresh wait
+        }
       }
     } catch (e) {
       console.error(e);
@@ -241,11 +451,32 @@ function App() {
       <main className="main-content">
         <div className="bridge-card">
           <div className="card-header">
-            <h1>Bridge Assets</h1>
-            <p>Transfer tokens securely between Omega Network and Solana.</p>
+            <div>
+              <h1>Bridge Assets</h1>
+              <p>Transfer tokens securely between Omega Network and Solana.</p>
+            </div>
+            <div className={`network-badge ${activeTab}`}>
+              {activeTab === 'tokens' ? '🟢 Devnet' : '🟣 Mainnet'}
+            </div>
           </div>
 
-          {/* Wallet Connection */}
+          {/* Tab Switcher */}
+          <div className="tab-group">
+            <button
+              className={`tab-btn ${activeTab === 'tokens' ? 'active' : ''}`}
+              onClick={() => handleTabChange('tokens')}
+            >
+              Tokens
+            </button>
+            <button
+              className={`tab-btn ${activeTab === 'nfts' ? 'active' : ''}`}
+              onClick={() => handleTabChange('nfts')}
+            >
+              NFTs
+            </button>
+          </div>
+
+          {/* Wallet Connection (Common) */}
           <div className="wallet-section">
             {direction === 'OMEGA_TO_SOL' ? (
               <>
@@ -298,27 +529,69 @@ function App() {
             )}
           </div>
 
-          {/* Input Section */}
-          <div className="input-group">
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-              <label>Amount</label>
-              <span style={{ fontSize: '0.8rem', color: '#666' }}>Balance: {balance}</span>
-            </div>
+          {activeTab === 'tokens' ? (
+            <>
+              {/* Input Section */}
+              <div className="input-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <label>Amount</label>
+                  <span style={{ fontSize: '0.8rem', color: '#666' }}>Balance: {balance}</span>
+                </div>
 
-            <div className="amount-input-container">
-              <input
-                type="number"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-              <span className="currency-badge">
-                OMGA
-              </span>
-            </div>
-          </div>
+                <div className="amount-input-container">
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                  />
+                  <span className="currency-badge">
+                    OMGA
+                  </span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="nft-selection-area">
+                <div className="nft-grid-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', alignContent: 'start', padding: '0.5rem', overflowY: 'auto', maxHeight: '300px' }}>
+                  {nfts.length === 0 ? (
+                    <div style={{ gridColumn: '1 / -1', padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
+                      <p>No NFTs found</p>
+                      <small>{direction === 'OMEGA_TO_SOL' ? "Connect Omega wallet" : "Connect Solana wallet"}</small>
+                    </div>
+                  ) : (
+                    nfts.map((nft) => {
+                      const isSelected = selectedNfts.find(n => n.mint === nft.mint);
+                      return (
+                        <div
+                          key={nft.mint}
+                          onClick={() => toggleNftSelection(nft)}
+                          style={{
+                            cursor: 'pointer',
+                            border: isSelected ? '2px solid #6b21a8' : '1px solid #e2e8f0',
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            opacity: isSelected ? 1 : 0.8,
+                            position: 'relative',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          {isSelected && <div style={{ position: 'absolute', top: 5, right: 5, background: '#6b21a8', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px' }}>✓</div>}
+                          <img src={nft.image} alt={nft.name} style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover' }} />
+                          <div style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', background: '#fff' }}>
+                            {nft.name}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </>
+          )}
 
-          {/* Direction Switch */}
+          {/* Common Bridge Controls (Direction & Action) */}
           <div className="switch-container">
             <button className="switch-btn" onClick={() => setDirection(d => d === 'OMEGA_TO_SOL' ? 'SOL_TO_OMEGA' : 'OMEGA_TO_SOL')}>
               <ArrowRightLeft size={20} />
@@ -331,16 +604,31 @@ function App() {
               : <span>From <strong>Solana</strong> to <strong>Omega Network</strong></span>
             }
           </div>
-
-          <button className="action-btn" onClick={handleBridge} disabled={loading}>
-            {loading ? <Loader2 className="animate-spin" style={{ margin: '0 auto' }} /> : "Bridge Assets"}
-          </button>
-
-          {status.msg && (
-            <div className={`status-msg ${status.type}`}>
-              {status.msg}
-            </div>
-          )}
+          <div className="action-button-container">
+            <button
+              className="action-btn"
+              onClick={handleBridge}
+              disabled={loading}
+            >
+              {loading ? <Loader2 className="animate-spin" size={24} style={{ margin: '0 auto' }} /> : (
+                activeTab === 'nfts'
+                  ? `Bridge ${selectedNfts.length > 0 ? selectedNfts.length + ' ' : ''}NFT${selectedNfts.length !== 1 ? 's' : ''}`
+                  : 'Bridge Assets'
+              )}
+            </button>
+            {status.msg && (
+              <div className={`status-msg ${status.type}`}>
+                {status.msg}
+                {status.link && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
+                    <a href={status.link} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                      View Transaction
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           <div style={{ marginTop: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', color: '#999', fontSize: '0.8rem' }}>
             <ShieldCheck size={14} />
