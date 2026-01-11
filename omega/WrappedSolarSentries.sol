@@ -24,6 +24,10 @@ contract WrappedSolarSentries is ERC721URIStorage, Ownable {
         emit WrappedMinted(to, newTokenId, _solanaMint);
     }
 
+    function updateTokenURI(uint256 tokenId, string memory newUri) external onlyOwner {
+        _setTokenURI(tokenId, newUri);
+    }
+
     function burnToSolana(uint256 tokenId, string memory solanaDestination) external {
         require(ownerOf(tokenId) == msg.sender, "Not token owner");
         string memory solMint = originalSolanaMint[tokenId];
