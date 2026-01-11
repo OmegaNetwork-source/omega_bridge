@@ -28,7 +28,13 @@ let solanaInfo;
 try {
     const solData = fs.readFileSync(path.resolve(__dirname, 'solana_info.json'));
     solanaInfo = JSON.parse(solData);
-    const secret = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'relayer-keypair.json')));
+
+    let secret;
+    if (process.env.SOLANA_RELAYER_KEYPAIR_JSON) {
+        secret = JSON.parse(process.env.SOLANA_RELAYER_KEYPAIR_JSON);
+    } else {
+        secret = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'relayer-keypair.json')));
+    }
     relayerSolana = Keypair.fromSecretKey(Uint8Array.from(secret));
 } catch (e) {
     console.error("Missing Solana configuration (run solana/setup_token.js first).");
