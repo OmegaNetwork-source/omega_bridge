@@ -64,7 +64,7 @@ const DocsModal = ({ isOpen, onClose }) => {
                         </div>
                         <div className="code-block">
                             <label>Relayer Solana Wallet</label>
-                            <code>CZ9QPVztLFTUrcJJXPujGVLTbFAxZX38hCDMXmvJ3dSZ</code>
+                            <code>4XJ4Mrkn8Jn8vaJKxmUQWSKHQdwaDiKsDDxeNexodiEq</code>
                             <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: '#666' }}>Custodial wallet for bridged NFTs. NFTs sent here are wrapped on Omega.</p>
                         </div>
                     </div>

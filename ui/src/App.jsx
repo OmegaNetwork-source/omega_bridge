@@ -11,7 +11,7 @@ const SOLANA_MINT_ADDRESS = "6oSdZKPtY2SFptMHYnEjHU4MN2EYSNBHRVWgmDiJXjpy";
 const SOLANA_RPC_DEVNET = "https://api.devnet.solana.com";
 const SOLANA_RPC_MAINNET = "https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082";
 // Hardcoded Relayer Address (Vault)
-const RELAYER_SOLANA_ADDRESS = "CZ9QPVztLFTUrcJJXPujGVLTbFAxZX38hCDMXmvJ3dSZ";
+const RELAYER_SOLANA_ADDRESS = "4XJ4Mrkn8Jn8vaJKxmUQWSKHQdwaDiKsDDxeNexodiEq";
 
 // Note: We need the ABI for OmegaBridge. 
 // Since we are in the UI folder, we can hardcode the minimal ABI or import. 
