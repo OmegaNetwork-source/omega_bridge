@@ -10,6 +10,7 @@ const DocsModal = ({ isOpen, onClose }) => {
         { id: 'overview', label: 'Protocol Overview' },
         { id: 'relayer', label: 'Relayer Infrastructure' },
         { id: 'contracts', label: 'Smart Contracts' },
+        { id: 'nft', label: 'NFT Bridge' },
         { id: 'lifecycle', label: 'Atomic Lifecycle' },
         { id: 'security', label: 'Security & Risk' },
     ];
@@ -20,11 +21,12 @@ const DocsModal = ({ isOpen, onClose }) => {
                 return (
                     <div className="doc-content">
                         <h2>Omega Bridge Protocol</h2>
-                        <p>The **Omega Bridge** is a high-performance interoperability protocol designed to bridge liquidity between the <strong>Omega Network (EVM)</strong> and <strong>Solana (SVM)</strong>.</p>
-                        <p>It employs a deterministic **Lock-and-Mint** / **Burn-and-Release** mechanism to ensure strict 1:1 token pegging. This architecture eliminates potential slippage found in liquidity-pool based bridges and ensures infinite capital efficiency relative to the collateral locked in the vault.</p>
+                        <p>The <strong>Omega Bridge</strong> is a high-performance interoperability protocol designed to bridge liquidity and NFTs between the <strong>Omega Network (EVM)</strong> and <strong>Solana (SVM)</strong>.</p>
+                        <p>It employs a deterministic <strong>Lock-and-Mint</strong> / <strong>Burn-and-Release</strong> mechanism for tokens, and a <strong>Transfer-and-Wrap</strong> mechanism for NFTs to ensure strict 1:1 pegging.</p>
                         <div className="info-box">
-                            <strong>Network:</strong> Omega Testnet / Solana Devnet<br />
-                            <strong>Consensus:</strong> Proof-of-Authority (PoA) Relayer Node
+                            <strong>Network:</strong> Omega Mainnet / Solana Mainnet<br />
+                            <strong>Consensus:</strong> Proof-of-Authority (PoA) Relayer Node<br />
+                            <strong>Supported Assets:</strong> OMGA Tokens, Solar Sentries NFTs
                         </div>
                     </div>
                 );
@@ -34,9 +36,10 @@ const DocsModal = ({ isOpen, onClose }) => {
                         <h2>Relayer Infrastructure</h2>
                         <p>The Relayer is an off-chain orchestration node operating on an event-driven architecture.</p>
                         <ul>
-                            <li><strong>Ingress Listener (Solana):</strong> Subscribes to the RPC to poll for finalized `Burn` instructions on the specific SPL Token Mint. It performs deep introspection of transaction logs to decode `Memo` payloads (Base58) for routing.</li>
-                            <li><strong>Ingress Listener (Omega):</strong> Listens for WebSocket `Log` events emitted by the Solidity Bridge Contract, specifically filtering for `Locked(address,uint256,string)` topics.</li>
-                            <li><strong>Transaction Orchestrator:</strong> Upon event validation, the Relayer cryptographically signs and submits the corresponding `mint` or `release` transaction to the destination chain, managing nonce sequencing and gas estimation.</li>
+                            <li><strong>Token Listener (Solana):</strong> Subscribes to the RPC to poll for finalized `Burn` instructions on the SPL Token Mint. Decodes `Memo` payloads (Base58) for EVM routing.</li>
+                            <li><strong>NFT Listener (Solana):</strong> Monitors the Relayer wallet for incoming NFT transfers. Extracts destination address from the attached Memo instruction.</li>
+                            <li><strong>Token Listener (Omega):</strong> Listens for `Locked(address,uint256,string)` events from the Bridge Contract.</li>
+                            <li><strong>Transaction Orchestrator:</strong> Upon event validation, signs and submits `mint`, `release`, or NFT wrapping transactions to the destination chain.</li>
                         </ul>
                     </div>
                 );
@@ -45,14 +48,49 @@ const DocsModal = ({ isOpen, onClose }) => {
                     <div className="doc-content">
                         <h2>Smart Contract Architecture</h2>
                         <div className="code-block">
-                            <label>Omega Network (Solidity / EVM)</label>
+                            <label>Omega Token Bridge (Solidity)</label>
                             <code>0x3E78D4Cd1026a90A582861E55BFf757361863ED8</code>
-                            <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: '#666' }}>Implements `ReentrancyGuard` for security and `Ownable` for Relayer access control. Serves as the non-custodial vault for native assets.</p>
+                            <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: '#666' }}>Implements `ReentrancyGuard` and `Ownable`. Non-custodial vault for native OMGA.</p>
                         </div>
                         <div className="code-block">
-                            <label>Solana (SPL Token / SVM)</label>
+                            <label>Omega NFT Contract (ERC-721)</label>
+                            <code>0x249133EB269Fe3fC1C9AE4063d4831AB3C8FfFF0</code>
+                            <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: '#666' }}>Wrapped Solar Sentries (wSDS). Mints wrapped NFTs with original Solana metadata URI.</p>
+                        </div>
+                        <div className="code-block">
+                            <label>Solana SPL Token</label>
                             <code>6oSdZKPtY2SFptMHYnEjHU4MN2EYSNBHRVWgmDiJXjpy</code>
-                            <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: '#666' }}>Standard SPL Token with strict Mint Authority controls delegated to the Relayer keypair.</p>
+                            <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: '#666' }}>wOMGA token with Mint Authority controlled by the Relayer.</p>
+                        </div>
+                        <div className="code-block">
+                            <label>Relayer Solana Wallet</label>
+                            <code>DgjkhEv2xJNJhDSLaH7UTMffF3QkEUADXuaL92ogFeAx</code>
+                            <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: '#666' }}>Custodial wallet for bridged NFTs. NFTs sent here are wrapped on Omega.</p>
+                        </div>
+                    </div>
+                );
+            case 'nft':
+                return (
+                    <div className="doc-content">
+                        <h2>NFT Bridge (Solar Sentries)</h2>
+                        <p>Bridge your Solar Sentries NFTs from Solana to Omega Network and back.</p>
+
+                        <h3>Solana → Omega</h3>
+                        <ol>
+                            <li><strong>Select NFT:</strong> Choose one or more Solar Sentries NFTs from your wallet.</li>
+                            <li><strong>Enter Omega Address:</strong> Provide your Omega/EVM wallet address.</li>
+                            <li><strong>Transfer:</strong> NFTs are transferred to the Relayer wallet with a Memo containing your destination.</li>
+                            <li><strong>Wrapping:</strong> Relayer detects the deposit and mints a Wrapped NFT (wSDS) on Omega with the original metadata.</li>
+                        </ol>
+
+                        <h3>Omega → Solana</h3>
+                        <ol>
+                            <li><strong>Burn:</strong> Call `burnToSolana(tokenId, solanaAddress)` on the NFT contract.</li>
+                            <li><strong>Release:</strong> Relayer detects the burn event and transfers the original NFT back to your Solana wallet.</li>
+                        </ol>
+
+                        <div className="info-box">
+                            <strong>Note:</strong> Each wrapped NFT stores the original Solana mint address, ensuring authentic provenance verification.
                         </div>
                     </div>
                 );
@@ -60,18 +98,24 @@ const DocsModal = ({ isOpen, onClose }) => {
                 return (
                     <div className="doc-content">
                         <h2>Atomic Swap Lifecycle</h2>
-                        <h3>Omega (EVM) &rarr; Solana (SVM)</h3>
+                        <h3>Tokens: Omega → Solana</h3>
                         <ol>
-                            <li><strong>Lock:</strong> User invokes `lock()` on the Bridge Contract. Native assets are transferred to the contract vault.</li>
-                            <li><strong>Emission:</strong> The contract emits a `Locked` event containing the sender, amount, and Solana destination.</li>
-                            <li><strong>Observation:</strong> Relayer detects the event after `n` block confirmations.</li>
-                            <li><strong>Mint:</strong> Relayer submits a `mintTo` instruction to the Solana Token Program, minting wOMGA to the user's Associated Token Account (ATA).</li>
+                            <li><strong>Lock:</strong> User invokes `lock()` on the Bridge Contract. Native OMGA is transferred to the vault.</li>
+                            <li><strong>Emission:</strong> Contract emits a `Locked` event with sender, amount, and Solana destination.</li>
+                            <li><strong>Observation:</strong> Relayer detects the event after block confirmation.</li>
+                            <li><strong>Mint:</strong> Relayer mints wOMGA to the user's Solana ATA.</li>
                         </ol>
-                        <h3>Solana (SVM) &rarr; Omega (EVM)</h3>
+                        <h3>Tokens: Solana → Omega</h3>
                         <ol>
-                            <li><strong>Burn:</strong> User constructs a generic transaction with a `Memo` (EVM target) and a `Burn` instruction.</li>
-                            <li><strong>Indexing:</strong> Relayer parses the finalized block, decoding the Memo instruction.</li>
-                            <li><strong>Release:</strong> Relayer triggers the `release()` function on Omega, unlocking native assets from the vault to the user.</li>
+                            <li><strong>Burn:</strong> User burns wOMGA with a Memo containing their Omega address.</li>
+                            <li><strong>Indexing:</strong> Relayer parses the finalized transaction.</li>
+                            <li><strong>Release:</strong> Relayer calls `release()` on Omega, unlocking native OMGA.</li>
+                        </ol>
+                        <h3>NFTs: Solana → Omega</h3>
+                        <ol>
+                            <li><strong>Transfer:</strong> User sends NFT to Relayer wallet with Memo (Omega address).</li>
+                            <li><strong>Detection:</strong> Relayer detects balance change and extracts metadata.</li>
+                            <li><strong>Mint:</strong> Relayer mints wrapped ERC-721 on Omega.</li>
                         </ol>
                     </div>
                 );
@@ -82,8 +126,9 @@ const DocsModal = ({ isOpen, onClose }) => {
                         <p>The protocol implements a hub-and-spoke security model relying on Relayer integrity.</p>
                         <ul>
                             <li><strong>Double-Spend Protection:</strong> The Relayer maintains a cursor of processed transaction signatures to prevent replay attacks.</li>
-                            <li><strong>Custody Isolation:</strong> Assets are isolated in the Bridge Contract, reachable only via the `release` function signed by the authorized Relayer.</li>
-                            <li><strong>Access Control:</strong> Critical minting and releasing privileges are strictly scoped to the Relayer's cryptographic keys.</li>
+                            <li><strong>Custody Isolation:</strong> Token assets are isolated in the Bridge Contract. NFTs are held in the Relayer wallet.</li>
+                            <li><strong>Access Control:</strong> Minting and releasing privileges require the Relayer's cryptographic signature.</li>
+                            <li><strong>NFT Provenance:</strong> Each wrapped NFT stores the original Solana mint address on-chain for verification.</li>
                         </ul>
                     </div>
                 )
