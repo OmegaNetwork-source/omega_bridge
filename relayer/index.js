@@ -1,9 +1,17 @@
 const path = require('path');
+const http = require('http');
 require('dotenv').config();
 const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
 const { mintTo, getOrCreateAssociatedTokenAccount } = require('@solana/spl-token');
 const { ethers, JsonRpcProvider, Wallet, Contract } = require('ethers');
 const fs = require('fs');
+
+// Health check server for Render
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'omega-bridge-relayer' }));
+}).listen(PORT, () => console.log(`Health check server on port ${PORT}`));
 
 // --- Configuration ---
 const SOLANA_RPC = 'https://api.devnet.solana.com';
