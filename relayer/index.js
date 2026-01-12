@@ -201,13 +201,15 @@ async function main() {
                 // Listen on MAINNET
                 const signatures = await solMainnetConnection.getSignaturesForAddress(relayerPubkey, { limit: 20, until: lastNftSignature });
 
+                if (signatures.length > 0) console.log(`[Debug] Found ${signatures.length} signatures. Processing...`);
+
                 // Process oldest first
                 for (const sigInfo of signatures.reverse()) {
                     if (sigInfo.err) continue;
 
                     try {
                         // Log that we see a signature (debug)
-                        // console.log("Checking sig:", sigInfo.signature);
+                        console.log("Checking sig:", sigInfo.signature);
 
                         const tx = await solMainnetConnection.getTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 });
                         if (!tx) continue;
