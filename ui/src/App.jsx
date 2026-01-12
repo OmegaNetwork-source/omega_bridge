@@ -134,6 +134,7 @@ function App() {
 
         const MinABI = [
           "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+          "function balanceOf(address) view returns (uint256)",
           "function ownerOf(uint256 tokenId) view returns (address)",
           "function tokenURI(uint256) view returns (string)"
         ];
@@ -143,19 +144,42 @@ function App() {
         for (const c of contracts) {
           const contract = new ethers.Contract(c.addr, MinABI, provider);
           try {
-            // Scan for incoming transfers (since contract is not Enumerable)
-            const filter = contract.filters.Transfer(null, omegaAddress);
-            const events = await contract.queryFilter(filter, 0, 'latest');
+            // 1. Check Balance First (Fast Fail)
+            const bal = Number(await contract.balanceOf(omegaAddress));
+            console.log(`[${c.name}] Balance: ${bal}`);
 
-            // Extract unique Token IDs
-            const tokenIds = new Set(events.map(e => e.args[2].toString()));
-            console.log(`[${c.name}] Found ${tokenIds.size} potential tokens`);
+            if (bal === 0) continue;
 
+            // 2. Scan Backwards for Events
+            const tokenIds = new Set();
+            let toBlock = await provider.getBlockNumber();
+            const stride = 50000; // Scan 50k blocks at a time
+            const maxDepth = 2000000; // Scan back 2M blocks max (~20-30 days on fast chain)
+            const minBlock = Math.max(0, toBlock - maxDepth);
+
+            console.log(`Scanning ${c.name} from ${toBlock} backwards...`);
+
+            while (toBlock > minBlock && tokenIds.size < bal) {
+              const fromBlock = Math.max(minBlock, toBlock - stride);
+              try {
+                const filter = contract.filters.Transfer(null, omegaAddress);
+                const events = await contract.queryFilter(filter, fromBlock, toBlock);
+
+                for (const e of events) {
+                  tokenIds.add(e.args[2].toString());
+                }
+              } catch (scanErr) {
+                console.warn("Block scan error", scanErr);
+                // If chunk fails, maybe reduce stride? For now continue.
+              }
+              toBlock = fromBlock - 1;
+            }
+
+            // 3. Verify Ownership & Add
             for (const id of tokenIds) {
               try {
                 const owner = await contract.ownerOf(id);
                 if (owner.toLowerCase() === omegaAddress.toLowerCase()) {
-                  // Verified Owner
                   found.push({
                     mint: id,
                     name: `${c.name} #${id}`,
@@ -166,10 +190,9 @@ function App() {
                     isOmega: true
                   });
                 }
-              } catch (e) {
-                // ownerOf might fail if burned
-              }
+              } catch (e) { }
             }
+
           } catch (err) { console.warn("Omega Scan Error:", c.name, err); }
         }
 
