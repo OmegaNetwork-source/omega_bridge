@@ -29,7 +29,8 @@ const METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt
 const ALLOWED_AUTHORITIES = [
   "9LoZrQjAuNjGKogMKuq8HXXbo245e3Y6vXYTff7Tr7nr", // Solar Sentries (Solscan)
   "HB55Zfu3md55JUeP6QjRPfxPHUTUEzZEXJFmf9s2HBJ2", // Solar Sentries (On-Chain)
-  "MorerMW4X2gUzhVRQCNFZJSkxC7wv7zGZqCNz72jGqs"   // Secret Serpent Society
+  "MorerMW4X2gUzhVRQCNFZJSkxC7wv7zGZqCNz72jGqs",  // Secret Serpent Society
+  "SeuppqTF9LQQPRXDX5cFZ3KjZwuqjbLWVEpa6Ly4h6d"   // Secret Serpent SC (Legacy/V1)
 ];
 
 // Helper to decode basic Metaplex Metadata (Name, Symbol, URI)
