@@ -467,6 +467,11 @@ function extractIncomingTransfer(tx, targetWalletPubkey) {
     const postBalances = tx.meta.postTokenBalances || [];
     const preBalances = tx.meta.preTokenBalances || [];
 
+    console.log(`[Debug Meta] PostBalances Count: ${postBalances.length}`);
+    if (postBalances.length > 0) {
+        console.log("Sample PostBalance Owner:", postBalances[0].owner);
+    }
+
     for (const post of postBalances) {
         // Debug: Log everything we see to find why it skips
         // console.log(`[Scan] Mint: ${post.mint}, Owner: ${post.owner}, Target: ${targetStr}`);
