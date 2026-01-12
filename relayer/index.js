@@ -234,7 +234,11 @@ async function main() {
                         // Valid TX found
                         console.log(`[Debug] Processing ${sigInfo.signature} (Meta OK)`);
 
+                        console.log("Calling extractMemo...");
                         const memo = extractMemo(tx);
+                        console.log("Memo extracted:", memo);
+
+                        console.log("Calling extractIncomingTransfer...");
                         const transfer = extractIncomingTransfer(tx, relayerPubkey);
 
                         if (transfer && memo) {
