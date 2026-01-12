@@ -211,16 +211,23 @@ async function main() {
                         // Log that we see a signature (debug)
                         console.log("Checking sig:", sigInfo.signature);
 
-                        // Wait 1s to allow RPC propagation
-                        await new Promise(r => setTimeout(r, 1000));
+                        // Retry loop for getTransaction to handle RPC delays
+                        let tx = null;
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                            // Exponential backoff: 1s, 2s, 4s
+                            await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
 
-                        const tx = await solMainnetConnection.getTransaction(sigInfo.signature, {
-                            maxSupportedTransactionVersion: 0,
-                            commitment: 'confirmed'
-                        });
+                            tx = await solMainnetConnection.getTransaction(sigInfo.signature, {
+                                maxSupportedTransactionVersion: 0,
+                                commitment: 'confirmed'
+                            });
+
+                            if (tx) break;
+                            console.log(`[Warn] Attempt ${attempt} failed to fetch tx ${sigInfo.signature}. Retrying...`);
+                        }
 
                         if (!tx) {
-                            console.log(`[Warn] getTransaction returned null for ${sigInfo.signature}. Skipping.`);
+                            console.error(`[Error] Failed to fetch tx details for ${sigInfo.signature} after 3 attempts. Skipping.`);
                             continue;
                         }
 
