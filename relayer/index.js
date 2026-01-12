@@ -211,8 +211,18 @@ async function main() {
                         // Log that we see a signature (debug)
                         console.log("Checking sig:", sigInfo.signature);
 
-                        const tx = await solMainnetConnection.getTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 });
-                        if (!tx) continue;
+                        // Wait 1s to allow RPC propagation
+                        await new Promise(r => setTimeout(r, 1000));
+
+                        const tx = await solMainnetConnection.getTransaction(sigInfo.signature, {
+                            maxSupportedTransactionVersion: 0,
+                            commitment: 'confirmed'
+                        });
+
+                        if (!tx) {
+                            console.log(`[Warn] getTransaction returned null for ${sigInfo.signature}. Skipping.`);
+                            continue;
+                        }
 
                         const memo = extractMemo(tx);
                         const transfer = extractIncomingTransfer(tx, relayerPubkey);
