@@ -180,11 +180,30 @@ function App() {
               try {
                 const owner = await contract.ownerOf(id);
                 if (owner.toLowerCase() === omegaAddress.toLowerCase()) {
+                  // Fetch Metadata
+                  let nftName = `${c.name} #${id}`;
+                  let nftImage = `https://placehold.co/200x200/4F46E5/FFF?text=${c.name}`;
+                  let nftSymbol = 'NFT';
+
+                  try {
+                    const uri = await contract.tokenURI(id);
+                    // Handle ipfs:// protocol if needed, but Solana URIs are usually http
+                    const fetchUri = uri.startsWith('ipfs://') ? uri.replace('ipfs://', 'https://ipfs.io/ipfs/') : uri;
+
+                    const metaRes = await fetch(fetchUri);
+                    const meta = await metaRes.json();
+                    if (meta.name) nftName = meta.name;
+                    if (meta.image) nftImage = meta.image;
+                    if (meta.symbol) nftSymbol = meta.symbol;
+                  } catch (err) {
+                    console.warn("Metadata fetch failed for", id, err);
+                  }
+
                   found.push({
                     mint: id,
-                    name: `${c.name} #${id}`,
-                    symbol: 'NFT',
-                    image: `https://placehold.co/200x200/4F46E5/FFF?text=${c.name}`,
+                    name: nftName,
+                    symbol: nftSymbol,
+                    image: nftImage,
                     collection: c.name,
                     contract: c.addr,
                     isOmega: true
