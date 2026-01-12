@@ -222,14 +222,17 @@ async function main() {
                                 commitment: 'confirmed'
                             });
 
-                            if (tx) break;
-                            console.log(`[Warn] Attempt ${attempt} failed to fetch tx ${sigInfo.signature}. Retrying...`);
+                            if (tx && tx.meta) break;
+                            console.log(`[Warn] Attempt ${attempt} failed (tx=${!!tx}, meta=${!!(tx && tx.meta)}) for ${sigInfo.signature}. Retrying...`);
                         }
 
-                        if (!tx) {
-                            console.error(`[Error] Failed to fetch tx details for ${sigInfo.signature} after 3 attempts. Skipping.`);
+                        if (!tx || !tx.meta) {
+                            console.error(`[Error] Failed to fetch tx+meta for ${sigInfo.signature} after 3 attempts. Skipping.`);
                             continue;
                         }
+
+                        // Valid TX found
+                        console.log(`[Debug] Processing ${sigInfo.signature} (Meta OK)`);
 
                         const memo = extractMemo(tx);
                         const transfer = extractIncomingTransfer(tx, relayerPubkey);
