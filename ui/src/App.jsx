@@ -119,6 +119,57 @@ function App() {
   };
 
   const fetchNFTs = async () => {
+    // 1. OMEGA -> SOL Direction
+    if (direction === 'OMEGA_TO_SOL') {
+      if (!omegaAddress) return;
+      setStatus({ type: 'info', msg: 'Fetching NFTs from Omega...' });
+      setNfts([]);
+
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const contracts = [
+          { addr: "0x0c33763995A6eC29D07317A8F4Eb37E338C5C4D3", name: "Solar Sentries" },
+          { addr: "0xc4adBE5BfF256c54f2fd6b906B4cfA407Af8a05E", name: "Secret Serpent Society" }
+        ];
+
+        const MinABI = [
+          "function balanceOf(address) view returns (uint256)",
+          "function tokenOfOwnerByIndex(address, uint256) view returns (uint256)",
+          "function tokenURI(uint256) view returns (string)"
+        ];
+
+        let found = [];
+
+        for (const c of contracts) {
+          const contract = new ethers.Contract(c.addr, MinABI, provider);
+          try {
+            const bal = await contract.balanceOf(omegaAddress);
+            console.log(`[${c.name}] Balance: ${bal}`);
+            for (let i = 0; i < Number(bal); i++) {
+              const id = await contract.tokenOfOwnerByIndex(omegaAddress, i);
+              // Minimal metadata for display
+              found.push({
+                mint: id.toString(),
+                name: `${c.name} #${id}`,
+                symbol: 'NFT',
+                image: `https://placehold.co/200x200/4F46E5/FFF?text=${c.name}`,
+                collection: c.name,
+                isOmega: true
+              });
+            }
+          } catch (err) { console.warn("Omega Scan Error:", c.name, err); }
+        }
+
+        setNfts(found);
+        setStatus({ type: '', msg: found.length === 0 ? 'No Omega NFTs found' : '' });
+      } catch (e) {
+        console.error(e);
+        setStatus({ type: 'error', msg: 'Failed to fetch Omega NFTs' });
+      }
+      return;
+    }
+
+    // 2. SOL -> OMEGA Direction
     if (!solanaAddress) return;
     setStatus({ type: 'info', msg: 'Fetching NFTs from Mainnet...' });
     setNfts([]); // Clear previous
