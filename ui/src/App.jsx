@@ -358,10 +358,27 @@ function App() {
           await tx.wait();
           setStatus({ type: 'success', msg: `Successfully locked ${amount} OMGA! Relayer will mint tokens to Solana shortly.` });
         } else {
-          // NFT bridging from Omega to Solana is not yet implemented
-          setStatus({ type: 'error', msg: 'NFT bridging from Omega to Solana is not yet available. Use Solana → Omega direction.' });
-          setLoading(false);
-          return;
+          // NFT Bridging OMEGA -> SOL
+          setStatus({ type: 'info', msg: `Burning ${selectedNfts.length} NFTs to release on Solana...` });
+
+          const BurnABI = ["function burnToSolana(uint256 tokenId, string memory solanaDestination)"];
+
+          for (const nft of selectedNfts) {
+            if (!nft.contract) continue;
+            const nftContract = new ethers.Contract(nft.contract, BurnABI, signer);
+            try {
+              const tx = await nftContract.burnToSolana(nft.mint, solanaAddress);
+              setStatus({ type: 'info', msg: `Burning ${nft.name}... Waiting for confirmation...` });
+              await tx.wait();
+            } catch (err) {
+              console.error("Burn failed for", nft.name, err);
+              setStatus({ type: 'error', msg: `Failed to bridge ${nft.name}: ${err.message}` });
+              setLoading(false);
+              return;
+            }
+          }
+
+          setStatus({ type: 'success', msg: `Successfully Bridged ${selectedNfts.length} NFTs to Solana! Check the Relayer logs for unlock.` });
         }
 
       } else {

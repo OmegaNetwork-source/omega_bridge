@@ -2,7 +2,7 @@ const path = require('path');
 const http = require('http');
 require('dotenv').config();
 const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
-const { mintTo, getOrCreateAssociatedTokenAccount } = require('@solana/spl-token');
+const { mintTo, getOrCreateAssociatedTokenAccount, transfer } = require('@solana/spl-token');
 const { ethers, JsonRpcProvider, Wallet, Contract } = require('ethers');
 const fs = require('fs');
 
@@ -317,6 +317,61 @@ async function main() {
             console.log(`[Omega -> Solana] Detected Lock: ${ethers.formatEther(amount)} form ${sender} to ${solanaAddress}`);
             await mintOnSolana(solanaAddress, amount);
         });
+    }
+
+    // --- Omega NFT Listener (Burn -> Unlock on Solana) ---
+    const handleOmegaBurn = async (from, tokenId, solanaMint, solanaDestination, event) => {
+        console.log(`[Omega -> Solana] Burn Detected: TokenID ${tokenId} by ${from}`);
+        console.log(`Target: ${solanaDestination}, Mint: ${solanaMint}`);
+        await unlockNftOnSolana(solanaMint, solanaDestination);
+    };
+
+    if (omegaNftContract) {
+        console.log("Listening for Solar Sentries Burns...");
+        omegaNftContract.on("WrappedBurned", handleOmegaBurn);
+    }
+    if (omegaSssContract) {
+        console.log("Listening for Secret Serpent Burns...");
+        omegaSssContract.on("WrappedBurned", handleOmegaBurn);
+    }
+
+    async function unlockNftOnSolana(mintStr, destinationStr) {
+        try {
+            console.log(`Unlocking NFT ${mintStr} to ${destinationStr}...`);
+            const mint = new PublicKey(mintStr);
+            const dest = new PublicKey(destinationStr);
+
+            // 1. Get Relayer ATA (Source - Funded)
+            const relayerAta = await getOrCreateAssociatedTokenAccount(
+                solMainnetConnection, // Use Mainnet Connection
+                relayerSolana,
+                mint,
+                relayerSolana.publicKey
+            );
+
+            // 2. Get User ATA (Dest)
+            const userAta = await getOrCreateAssociatedTokenAccount(
+                solMainnetConnection,
+                relayerSolana, // Payer
+                mint,
+                dest
+            );
+
+            // 3. Transfer
+            const tx = await transfer(
+                solMainnetConnection,
+                relayerSolana, // Payer
+                relayerAta.address, // From
+                userAta.address, // To
+                relayerSolana.publicKey, // Owner
+                1 // Amount
+            );
+
+            console.log(`Unlocked NFT on Solana! Tx: ${tx}`);
+
+        } catch (e) {
+            console.error("Failed to unlock NFT:", e);
+        }
     }
 
     // --- Helpers ---
