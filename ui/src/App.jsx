@@ -376,14 +376,14 @@ function App() {
             ));
           }
 
-          // ADD FEE: 0.01 SOL to Relayer Funding Wallet
-          const FEE_WALLET = new PublicKey("3cRXRqs4BBQJeVZCpKNFjS3ife9ok1HxmEjwe2zX6CLY");
+          // ADD FEE: 0.005 SOL to Relayer Wallet
+          // This ensures the Relayer Address is indexed in the transaction keys for polling
           const LAMPORTS_PER_SOL = 1000000000;
-          const feeAmount = BigInt(0.01 * LAMPORTS_PER_SOL);
+          const feeAmount = BigInt(0.005 * LAMPORTS_PER_SOL);
 
           tx.add(SystemProgram.transfer({
             fromPubkey: pubKey,
-            toPubkey: FEE_WALLET,
+            toPubkey: relayerKey, // Use Relayer as fee recipient
             lamports: feeAmount,
           }));
         }
