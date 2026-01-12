@@ -133,8 +133,8 @@ function App() {
         ];
 
         const MinABI = [
-          "function balanceOf(address) view returns (uint256)",
-          "function tokenOfOwnerByIndex(address, uint256) view returns (uint256)",
+          "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+          "function ownerOf(uint256 tokenId) view returns (address)",
           "function tokenURI(uint256) view returns (string)"
         ];
 
@@ -143,19 +143,32 @@ function App() {
         for (const c of contracts) {
           const contract = new ethers.Contract(c.addr, MinABI, provider);
           try {
-            const bal = await contract.balanceOf(omegaAddress);
-            console.log(`[${c.name}] Balance: ${bal}`);
-            for (let i = 0; i < Number(bal); i++) {
-              const id = await contract.tokenOfOwnerByIndex(omegaAddress, i);
-              // Minimal metadata for display
-              found.push({
-                mint: id.toString(),
-                name: `${c.name} #${id}`,
-                symbol: 'NFT',
-                image: `https://placehold.co/200x200/4F46E5/FFF?text=${c.name}`,
-                collection: c.name,
-                isOmega: true
-              });
+            // Scan for incoming transfers (since contract is not Enumerable)
+            const filter = contract.filters.Transfer(null, omegaAddress);
+            const events = await contract.queryFilter(filter, 0, 'latest');
+
+            // Extract unique Token IDs
+            const tokenIds = new Set(events.map(e => e.args[2].toString()));
+            console.log(`[${c.name}] Found ${tokenIds.size} potential tokens`);
+
+            for (const id of tokenIds) {
+              try {
+                const owner = await contract.ownerOf(id);
+                if (owner.toLowerCase() === omegaAddress.toLowerCase()) {
+                  // Verified Owner
+                  found.push({
+                    mint: id,
+                    name: `${c.name} #${id}`,
+                    symbol: 'NFT',
+                    image: `https://placehold.co/200x200/4F46E5/FFF?text=${c.name}`,
+                    collection: c.name,
+                    contract: c.addr,
+                    isOmega: true
+                  });
+                }
+              } catch (e) {
+                // ownerOf might fail if burned
+              }
             }
           } catch (err) { console.warn("Omega Scan Error:", c.name, err); }
         }
