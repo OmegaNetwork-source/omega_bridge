@@ -458,6 +458,9 @@ function extractIncomingTransfer(tx, targetWalletPubkey) {
     const preBalances = tx.meta.preTokenBalances || [];
 
     for (const post of postBalances) {
+        // Debug: Log everything we see to find why it skips
+        // console.log(`[Scan] Mint: ${post.mint}, Owner: ${post.owner}, Target: ${targetStr}`);
+
         if (post.owner !== targetStr) continue;
 
         // Find corresponding pre-balance
@@ -469,6 +472,8 @@ function extractIncomingTransfer(tx, targetWalletPubkey) {
         }
 
         const postAmount = BigInt(post.uiTokenAmount.amount);
+
+        console.log(`[Balance Check] Mint:${post.mint} Owner:${post.owner} Pre:${preAmount} Post:${postAmount}`);
 
         // Check if balance increased
         if (postAmount > preAmount) {
