@@ -135,7 +135,7 @@ function App() {
           params: {
             ownerAddress: solanaAddress,
             page: 1,
-            limit: 100,
+            limit: 1000,
             displayOptions: { showFungible: false, showNativeBalance: false }
           }
         })
