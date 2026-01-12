@@ -238,8 +238,8 @@ async function main() {
                         const memo = extractMemo(tx);
                         console.log("Memo extracted:", memo);
 
-                        console.log("Calling extractIncomingTransfer...");
-                        const transfer = extractIncomingTransfer(tx, relayerPubkey);
+                        console.log("Calling analyzeTransfer with:", relayerPubkey ? relayerPubkey.toString() : "NULL");
+                        const transfer = analyzeTransfer(tx, relayerPubkey);
 
                         if (transfer && memo) {
                             console.log(`[NFT Bridge] Deposit Detected: ${transfer.mint} -> ${memo}`);
@@ -471,7 +471,8 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('UNHANDLED REJECTION:', reason);
 });
 
-function extractIncomingTransfer(tx, targetWalletPubkey) {
+function analyzeTransfer(tx, targetWalletPubkey) {
+    console.log("[DEBUG] Entered analyzeTransfer");
     if (!tx || !tx.meta) return null;
 
     // We look for a balance INCREASE on the target wallet
