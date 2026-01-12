@@ -188,15 +188,27 @@ async function main() {
         console.log("Connecting to Mainnet RPC:", SOLANA_RPC_MAINNET);
 
         let lastNftSignature = null;
-        setInterval(async () => {
+        let isPolling = false;
+
+        // Heartbeat to prove life in logs
+        setInterval(() => console.log(`[Heartbeat] NFT Bridge Service is alive (${new Date().toLocaleTimeString()})`), 60000);
+
+        const pollNftBridge = async () => {
+            if (isPolling) return; // Prevention
+            isPolling = true;
+
             try {
                 // Listen on MAINNET
-                const signatures = await solMainnetConnection.getSignaturesForAddress(relayerPubkey, { limit: 100, until: lastNftSignature });
+                const signatures = await solMainnetConnection.getSignaturesForAddress(relayerPubkey, { limit: 20, until: lastNftSignature });
 
+                // Process oldest first
                 for (const sigInfo of signatures.reverse()) {
                     if (sigInfo.err) continue;
 
                     try {
+                        // Log that we see a signature (debug)
+                        // console.log("Checking sig:", sigInfo.signature);
+
                         const tx = await solMainnetConnection.getTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 });
                         if (!tx) continue;
 
@@ -208,17 +220,23 @@ async function main() {
                             await processNftBridge(transfer.mint, memo);
                         }
 
-                        // Update last processed ONLY after success or attempted processing
+                        // Update watermark to prevent re-processing
                         lastNftSignature = sigInfo.signature;
 
                     } catch (err) {
                         console.error("Error processing tx:", sigInfo.signature, err.message);
-                        // Do NOT update lastNftSignature, so we retry next time (if it's the blocking one)
-                        // But since we iterate multiple, this is complex. Simpler is just log.
                     }
                 }
-            } catch (e) { console.error("Error polling NFT deposits:", e.message); }
-        }, 5000);
+            } catch (e) {
+                console.error("Error polling NFT deposits:", e.message);
+            } finally {
+                isPolling = false;
+                setTimeout(pollNftBridge, 5000); // Wait 5s before next poll
+            }
+        };
+
+        // Start the loop
+        pollNftBridge();
     }
     if (solanaInfo) {
         const mintPubkey = new PublicKey(solanaInfo.mintAddress);
