@@ -136,7 +136,8 @@ function App() {
           "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
           "function balanceOf(address) view returns (uint256)",
           "function ownerOf(uint256 tokenId) view returns (address)",
-          "function tokenURI(uint256) view returns (string)"
+          "function tokenURI(uint256) view returns (string)",
+          "function tokenCounter() view returns (uint256)"
         ];
 
         let found = [];
@@ -150,29 +151,34 @@ function App() {
 
             if (bal === 0) continue;
 
-            // 2. Scan Backwards for Events
+            // 2. Scan IDs using tokenCounter (Reliable for low supply)
+            let maxId = 0;
+            try {
+              maxId = Number(await contract.tokenCounter());
+            } catch (e) {
+              console.log("No tokenCounter found, defaulting to scan...", e);
+              maxId = 500; // Fallback
+            }
+
+            console.log(`Scanning ${c.name} up to ID ${maxId}...`);
+
             const tokenIds = new Set();
-            let toBlock = await provider.getBlockNumber();
-            const stride = 50000; // Scan 50k blocks at a time
-            const maxDepth = 2000000; // Scan back 2M blocks max (~20-30 days on fast chain)
-            const minBlock = Math.max(0, toBlock - maxDepth);
-
-            console.log(`Scanning ${c.name} from ${toBlock} backwards...`);
-
-            while (toBlock > minBlock && tokenIds.size < bal) {
-              const fromBlock = Math.max(minBlock, toBlock - stride);
-              try {
-                const filter = contract.filters.Transfer(null, omegaAddress);
-                const events = await contract.queryFilter(filter, fromBlock, toBlock);
-
-                for (const e of events) {
-                  tokenIds.add(e.args[2].toString());
-                }
-              } catch (scanErr) {
-                console.warn("Block scan error", scanErr);
-                // If chunk fails, maybe reduce stride? For now continue.
+            // Simple batching to avoid congestion (chunks of 20)
+            const batchSize = 20;
+            for (let i = 0; i < maxId; i += batchSize) {
+              const batch = [];
+              for (let j = i; j < Math.min(i + batchSize, maxId); j++) {
+                batch.push(
+                  contract.ownerOf(j)
+                    .then(owner => {
+                      if (owner.toLowerCase() === omegaAddress.toLowerCase()) {
+                        tokenIds.add(j.toString());
+                      }
+                    })
+                    .catch(() => { }) // Ignore if ownerOf fails (e.g. valid ID check)
+                );
               }
-              toBlock = fromBlock - 1;
+              await Promise.all(batch);
             }
 
             // 3. Verify Ownership & Add
