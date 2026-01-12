@@ -436,3 +436,46 @@ function extractBurnAmount(tx, mintPubkey) {
 }
 
 main().catch(console.error);
+
+process.on('uncaughtException', (err) => {
+    console.error('UNCAUGHT EXCEPTION:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('UNHANDLED REJECTION:', reason);
+});
+
+function extractIncomingTransfer(tx, targetWalletPubkey) {
+    if (!tx || !tx.meta) return null;
+
+    // We look for a balance INCREASE on the target wallet
+    // for ANY mint (since we accept any NFT in the whitelist)
+    const targetStr = targetWalletPubkey.toBase58();
+
+    const postBalances = tx.meta.postTokenBalances || [];
+    const preBalances = tx.meta.preTokenBalances || [];
+
+    for (const post of postBalances) {
+        if (post.owner !== targetStr) continue;
+
+        // Find corresponding pre-balance
+        const pre = preBalances.find(p => p.accountIndex === post.accountIndex);
+
+        let preAmount = 0n;
+        if (pre) {
+            preAmount = BigInt(pre.uiTokenAmount.amount);
+        }
+
+        const postAmount = BigInt(post.uiTokenAmount.amount);
+
+        // Check if balance increased
+        if (postAmount > preAmount) {
+            console.log(`Debug: Balance increased for ${post.mint}. Pre: ${preAmount}, Post: ${postAmount}`);
+            return {
+                mint: post.mint,
+                amount: postAmount - preAmount // Usually 1 for NFT
+            };
+        }
+    }
+    return null;
+}
