@@ -407,9 +407,14 @@ function extractMemo(tx) {
     // In production, we iterate over tx.transaction.message.instructions
 
     for (const ix of tx.transaction.message.instructions) {
-        // Check programId index mapping
-        const progIdKey = tx.transaction.message.accountKeys[ix.programIdIndex];
-        const progIdStr = progIdKey.toString();
+        // Handle Parsed vs Legacy
+        let progIdStr;
+        if (ix.programId) {
+            progIdStr = ix.programId; // Parsed format
+        } else {
+            const progIdKey = tx.transaction.message.accountKeys[ix.programIdIndex];
+            progIdStr = progIdKey.toString();
+        }
 
         if (tx.transaction.signatures[0].startsWith("5pt3")) {
             console.log(`[DEBUG 5pt3] Instruction Program: ${progIdStr}`);
@@ -419,12 +424,21 @@ function extractMemo(tx) {
         if (progIdStr === "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo" ||
             progIdStr === "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcQb") {
 
+            // Handle Helius "parsed" format
+            if (ix.parsed && typeof ix.parsed === 'string') {
+                return ix.parsed;
+            }
+            if (ix.parsed) { // Sometimes object?
+                console.log("Memo is object?", ix.parsed);
+            }
+
             let dataBuffer = ix.data;
+            if (!dataBuffer) continue; // If parsed is missing and data is missing
+
             if (typeof ix.data === 'string') {
                 try {
                     dataBuffer = bs58.decode(ix.data);
                 } catch (e) {
-                    // if decode fails, maybe it's not base58? ignore.
                     console.log("Memo decode failed", e);
                     continue;
                 }
