@@ -79,6 +79,9 @@ function App() {
   const [activeTab, setActiveTab] = useState('tokens');
   const [selectedNfts, setSelectedNfts] = useState([]); // Array for Bulk
   const [nfts, setNfts] = useState([]);
+  
+  // Ref to track fetch version and cancel stale requests
+  const fetchIdRef = React.useRef(0);
 
   // Fetch Logic
   const fetchBalances = async () => {
@@ -119,110 +122,164 @@ function App() {
   };
 
   const fetchNFTs = async () => {
+    // Increment fetch ID and capture it for this request
+    const currentFetchId = ++fetchIdRef.current;
+    console.log('[DEBUG] Starting fetchNFTs, id:', currentFetchId, 'direction:', direction);
+    
     // 1. OMEGA -> SOL Direction
     if (direction === 'OMEGA_TO_SOL') {
       if (!omegaAddress) return;
+      console.log('[DEBUG] Fetching Omega NFTs for:', omegaAddress);
       setStatus({ type: 'info', msg: 'Fetching NFTs from Omega...' });
       setNfts([]);
 
       try {
-        const provider = new ethers.BrowserProvider(window.ethereum);
+        const OMEGA_RPC = "https://0x4e454228.rpc.aurora-cloud.dev";
+        
+        // Helper to make raw JSON-RPC calls
+        const rpcCall = async (method, params) => {
+          const res = await fetch(OMEGA_RPC, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method,
+              params
+            })
+          });
+          const json = await res.json();
+          if (json.error) throw new Error(json.error.message);
+          return json.result;
+        };
+
+        // balanceOf(address) function signature: 0x70a08231
+        const encodeBalanceOf = (addr) => 
+          '0x70a08231000000000000000000000000' + addr.slice(2).toLowerCase();
+        
+        // ownerOf(uint256) function signature: 0x6352211e
+        const encodeOwnerOf = (tokenId) => 
+          '0x6352211e' + tokenId.toString(16).padStart(64, '0');
+        
+        // tokenURI(uint256) function signature: 0xc87b56dd
+        const encodeTokenURI = (tokenId) => 
+          '0xc87b56dd' + tokenId.toString(16).padStart(64, '0');
+        
+        // tokenCounter() function signature: 0xd082e381
+        const encodeTokenCounter = () => '0xd082e381';
+
         const contracts = [
           { addr: "0x0c33763995A6eC29D07317A8F4Eb37E338C5C4D3", name: "Solar Sentries" },
           { addr: "0xc4adBE5BfF256c54f2fd6b906B4cfA407Af8a05E", name: "Secret Serpent Society" }
         ];
 
-        const MinABI = [
-          "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
-          "function balanceOf(address) view returns (uint256)",
-          "function ownerOf(uint256 tokenId) view returns (address)",
-          "function tokenURI(uint256) view returns (string)",
-          "function tokenCounter() view returns (uint256)"
-        ];
-
         let found = [];
 
         for (const c of contracts) {
-          const contract = new ethers.Contract(c.addr, MinABI, provider);
           try {
-            // 1. Check Balance First (Fast Fail)
-            const bal = Number(await contract.balanceOf(omegaAddress));
+            // 1. Check Balance
+            const balResult = await rpcCall('eth_call', [{ to: c.addr, data: encodeBalanceOf(omegaAddress) }, 'latest']);
+            const bal = parseInt(balResult, 16);
             console.log(`[${c.name}] Balance: ${bal}`);
-
+            
             if (bal === 0) continue;
 
-            // 2. Scan IDs using tokenCounter (Reliable for low supply)
-            let maxId = 0;
+            // 2. Get tokenCounter
+            let maxId = 100;
             try {
-              maxId = Number(await contract.tokenCounter());
+              const counterResult = await rpcCall('eth_call', [{ to: c.addr, data: encodeTokenCounter() }, 'latest']);
+              maxId = parseInt(counterResult, 16);
             } catch (e) {
-              console.log("No tokenCounter found, defaulting to scan...", e);
-              maxId = 500; // Fallback
+              console.log('No tokenCounter, using default 100');
             }
+            console.log(`[${c.name}] Scanning up to ID ${maxId}...`);
 
-            console.log(`Scanning ${c.name} up to ID ${maxId}...`);
-
-            const tokenIds = new Set();
-            // Simple batching to avoid congestion (chunks of 20)
-            const batchSize = 20;
-            for (let i = 0; i < maxId; i += batchSize) {
-              const batch = [];
-              for (let j = i; j < Math.min(i + batchSize, maxId); j++) {
-                batch.push(
-                  contract.ownerOf(j)
-                    .then(owner => {
-                      if (owner.toLowerCase() === omegaAddress.toLowerCase()) {
-                        tokenIds.add(j.toString());
-                      }
-                    })
-                    .catch(() => { }) // Ignore if ownerOf fails (e.g. valid ID check)
-                );
-              }
-              await Promise.all(batch);
-            }
-
-            // 3. Verify Ownership & Add
-            for (const id of tokenIds) {
+            // 3. Find owned tokens
+            for (let tokenId = 0; tokenId < maxId; tokenId++) {
               try {
-                const owner = await contract.ownerOf(id);
-                if (owner.toLowerCase() === omegaAddress.toLowerCase()) {
-                  // Fetch Metadata
-                  let nftName = `${c.name} #${id}`;
+                const ownerResult = await rpcCall('eth_call', [{ to: c.addr, data: encodeOwnerOf(tokenId) }, 'latest']);
+                const owner = '0x' + ownerResult.slice(26).toLowerCase();
+                
+                if (owner === omegaAddress.toLowerCase()) {
+                  console.log(`[${c.name}] Found token #${tokenId}`);
+                  
+                  // Get metadata
+                  let nftName = `${c.name} #${tokenId}`;
                   let nftImage = `https://placehold.co/200x200/4F46E5/FFF?text=${c.name}`;
-                  let nftSymbol = 'NFT';
+                  let solanaMint = '';
 
                   try {
-                    const uri = await contract.tokenURI(id);
-                    // Handle ipfs:// protocol if needed, but Solana URIs are usually http
-                    const fetchUri = uri.startsWith('ipfs://') ? uri.replace('ipfs://', 'https://ipfs.io/ipfs/') : uri;
+                    // First get the original Solana mint address
+                    // originalSolanaMint(uint256) function signature: 0x6b051f73
+                    const encodeOriginalMint = (id) => '0x6b051f73' + id.toString(16).padStart(64, '0');
+                    const mintResult = await rpcCall('eth_call', [{ to: c.addr, data: encodeOriginalMint(tokenId) }, 'latest']);
+                    
+                    // Decode string from ABI
+                    const offset = parseInt(mintResult.slice(2, 66), 16) * 2 + 2;
+                    const length = parseInt(mintResult.slice(offset, offset + 64), 16);
+                    const hexStr = mintResult.slice(offset + 64, offset + 64 + length * 2);
+                    for (let i = 0; i < hexStr.length; i += 2) {
+                      solanaMint += String.fromCharCode(parseInt(hexStr.slice(i, i + 2), 16));
+                    }
+                    console.log(`[${c.name}] Token #${tokenId} Solana Mint:`, solanaMint);
 
-                    const metaRes = await fetch(fetchUri);
-                    const meta = await metaRes.json();
-                    if (meta.name) nftName = meta.name;
-                    if (meta.image) nftImage = meta.image;
-                    if (meta.symbol) nftSymbol = meta.symbol;
-                  } catch (err) {
-                    console.warn("Metadata fetch failed for", id, err);
+                    // Use Helius DAS API to get cached metadata
+                    if (solanaMint) {
+                      const dasRes = await fetch('https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          jsonrpc: '2.0',
+                          id: 'omega-bridge',
+                          method: 'getAsset',
+                          params: { id: solanaMint }
+                        })
+                      });
+                      const dasData = await dasRes.json();
+                      if (dasData.result?.content) {
+                        const content = dasData.result.content;
+                        if (content.metadata?.name) nftName = content.metadata.name;
+                        // Use CDN image if available, otherwise fallback to links.image
+                        if (content.files?.[0]?.cdn_uri) {
+                          nftImage = content.files[0].cdn_uri;
+                        } else if (content.links?.image) {
+                          nftImage = content.links.image;
+                        }
+                        console.log(`[${c.name}] Got metadata from Helius:`, nftName, nftImage);
+                      }
+                    }
+                  } catch (e) {
+                    console.warn('Metadata fetch failed for', tokenId, e);
                   }
 
                   found.push({
-                    mint: id,
+                    mint: tokenId.toString(),
                     name: nftName,
-                    symbol: nftSymbol,
+                    symbol: c.name.includes('Solar') ? 'SDS' : 'SSS',
                     image: nftImage,
                     collection: c.name,
                     contract: c.addr,
-                    isOmega: true
+                    isOmega: true,
+                    solanaMint: solanaMint
                   });
                 }
-              } catch (e) { }
+              } catch (e) {
+                // Token doesn't exist
+              }
             }
-
-          } catch (err) { console.warn("Omega Scan Error:", c.name, err); }
+          } catch (err) { 
+            console.warn("Omega Scan Error:", c.name, err); 
+          }
         }
 
+        // Check if this request is still valid before updating state
+        if (currentFetchId !== fetchIdRef.current) {
+          console.log('[DEBUG] Stale Omega fetch, ignoring results');
+          return;
+        }
+        console.log('[DEBUG] Found NFTs:', found);
         setNfts(found);
-        setStatus({ type: '', msg: found.length === 0 ? 'No Omega NFTs found' : '' });
+        setStatus({ type: '', msg: found.length === 0 ? 'No Omega NFTs found' : `Found ${found.length} NFT(s)` });
       } catch (e) {
         console.error(e);
         setStatus({ type: 'error', msg: 'Failed to fetch Omega NFTs' });
@@ -280,6 +337,11 @@ function App() {
           collection: item.grouping?.find(g => g.group_key === 'collection')?.group_value
         }));
 
+      // Check if this request is still valid before updating state
+      if (currentFetchId !== fetchIdRef.current) {
+        console.log('[DEBUG] Stale Solana fetch, ignoring results');
+        return;
+      }
       console.log("Loaded NFTs:", loadedNfts);
       setNfts(loadedNfts);
       setStatus({ type: '', msg: loadedNfts.length === 0 ? 'No whitelisted NFTs found' : '' });
@@ -305,13 +367,11 @@ function App() {
     setActiveTab(tab);
     // Clearing previous state when switching
     setStatus({ type: '', msg: '' });
-    if (tab === 'nfts') {
-      fetchNFTs();
-      setBalance('--'); // Hide token balance
-      setSelectedNfts([]); // Clear selected NFTs when switching tabs
-    } else {
-      fetchBalances();
+    setSelectedNfts([]); // Clear selected NFTs when switching tabs
+    if (tab === 'tokens') {
+      setBalance('--');
     }
+    // Note: fetchNFTs is called automatically by useEffect when activeTab changes
   };
 
   const toggleNftSelection = (nft) => {

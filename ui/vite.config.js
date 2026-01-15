@@ -4,6 +4,9 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    host: true, // Bind to all interfaces (0.0.0.0) - allows 127.0.0.1 and localhost
+  },
   plugins: [
     react(),
     nodePolyfills({

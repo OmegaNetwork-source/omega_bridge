@@ -41,8 +41,17 @@ try {
     // process.exit(1); // Don't exit to allow partial code review
 }
 
-// Load Omega Info
+// Load Omega Token Bridge Info
 let omegaInfo;
+try {
+    const omegaData = fs.readFileSync(path.resolve(__dirname, 'omega_deployment.json'));
+    omegaInfo = JSON.parse(omegaData);
+    console.log("Loaded Omega Token Bridge:", omegaInfo.address);
+} catch (e) {
+    console.warn("Missing Omega Token Bridge deployment info (omega_deployment.json).");
+    omegaInfo = { address: "0x0000000000000000000000000000000000000000", abi: [] };
+}
+
 // Load Omega NFT Info (Solar Sentries)
 let omegaNftInfo;
 try {
@@ -414,36 +423,53 @@ async function main() {
 
     async function mintOnSolana(targetAddress, amountWei) {
         if (!relayerSolana || !solanaInfo) return;
-        try {
-            console.log(`Processing Mint to ${targetAddress}...`);
-            // Conversion: Omega (18) -> Solana (9)
-            // Amount / 10^9
-            const adjustedAmount = BigInt(amountWei) / BigInt(10 ** 9);
+        
+        const maxRetries = 3;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`Processing Mint to ${targetAddress}... (attempt ${attempt}/${maxRetries})`);
+                // Conversion: Omega (18) -> Solana (9)
+                // Amount / 10^9
+                const adjustedAmount = BigInt(amountWei) / BigInt(10 ** 9);
 
-            const destPubkey = new PublicKey(targetAddress);
-            const mintPubkey = new PublicKey(solanaInfo.mintAddress);
+                const destPubkey = new PublicKey(targetAddress);
+                const mintPubkey = new PublicKey(solanaInfo.mintAddress);
 
-            // Get/Create ATA
-            const userATA = await getOrCreateAssociatedTokenAccount(
-                solConnection,
-                relayerSolana,
-                mintPubkey,
-                destPubkey
-            );
+                // Create fresh connection for each attempt to get fresh blockhash
+                const freshConnection = new Connection(SOLANA_RPC, {
+                    commitment: 'confirmed',
+                    confirmTransactionInitialTimeout: 60000
+                });
 
-            // Mint
-            const tx = await mintTo(
-                solConnection,
-                relayerSolana,
-                mintPubkey,
-                userATA.address,
-                relayerSolana,
-                adjustedAmount
-            );
-            console.log(`Mint Tx Confirmed: ${tx}`);
+                // Get/Create ATA
+                const userATA = await getOrCreateAssociatedTokenAccount(
+                    freshConnection,
+                    relayerSolana,
+                    mintPubkey,
+                    destPubkey
+                );
 
-        } catch (e) {
-            console.error("Failed to mint on Solana:", e);
+                // Mint with fresh connection
+                const tx = await mintTo(
+                    freshConnection,
+                    relayerSolana,
+                    mintPubkey,
+                    userATA.address,
+                    relayerSolana,
+                    adjustedAmount
+                );
+                console.log(`✅ Mint Tx Confirmed: ${tx}`);
+                return; // Success, exit retry loop
+
+            } catch (e) {
+                console.error(`Mint attempt ${attempt} failed:`, e.message);
+                if (attempt === maxRetries) {
+                    console.error("Failed to mint on Solana after all retries:", e);
+                } else {
+                    console.log(`Waiting 2s before retry...`);
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+            }
         }
     }
 }
@@ -458,21 +484,43 @@ function extractMemo(tx) {
     // Program ID: Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo
     if (!tx.meta || !tx.meta.logMessages) return null;
 
-    // Sometimes memo is in instructions data. Simple parsing:
-    // In production, we iterate over tx.transaction.message.instructions
+    // Handle both legacy and versioned (v0) transaction formats
+    let instructions = tx.transaction.message.instructions;
+    
+    // For versioned transactions, instructions might be in compiledInstructions
+    if (!instructions || !Array.isArray(instructions)) {
+        instructions = tx.transaction.message.compiledInstructions;
+    }
+    
+    // Still not found? Try to extract from log messages as fallback
+    if (!instructions || !Array.isArray(instructions)) {
+        // Fallback: Look for memo in log messages
+        for (const log of tx.meta.logMessages) {
+            if (log.includes('Memo (len')) {
+                // Format: "Program log: Memo (len 42): \"0x84648D72E9e9882bd366df6898D66c93780FDb2a\""
+                const match = log.match(/Memo \(len \d+\): "(.+)"/);
+                if (match) return match[1];
+            }
+        }
+        return null;
+    }
 
-    for (const ix of tx.transaction.message.instructions) {
-        // Handle Parsed vs Legacy
+    // Get account keys (handles both legacy and versioned formats)
+    let accountKeys = tx.transaction.message.accountKeys;
+    if (!accountKeys && tx.transaction.message.staticAccountKeys) {
+        accountKeys = tx.transaction.message.staticAccountKeys;
+    }
+
+    for (const ix of instructions) {
+        // Handle Parsed vs Legacy vs Compiled
         let progIdStr;
         if (ix.programId) {
-            progIdStr = ix.programId; // Parsed format
+            progIdStr = ix.programId.toString(); // Parsed format
+        } else if (ix.programIdIndex !== undefined && accountKeys) {
+            const progIdKey = accountKeys[ix.programIdIndex];
+            progIdStr = progIdKey?.toString() || progIdKey;
         } else {
-            const progIdKey = tx.transaction.message.accountKeys[ix.programIdIndex];
-            progIdStr = progIdKey.toString();
-        }
-
-        if (tx.transaction.signatures[0].startsWith("5pt3")) {
-            console.log(`[DEBUG 5pt3] Instruction Program: ${progIdStr}`);
+            continue;
         }
 
         // Support both Memo v1 and v2
