@@ -1,4 +1,4 @@
-# Omega Bridge
+# Omega Bridge v2
 
 Cross-chain bridge for Solar Sentries NFTs between Solana and Omega Network.
 
