@@ -131,7 +131,7 @@ function App() {
       if (!omegaAddress) return;
       console.log('[DEBUG] Fetching Omega NFTs for:', omegaAddress);
       setStatus({ type: 'info', msg: 'Fetching NFTs from Omega...' });
-      setNfts([]);
+      // Keep old NFTs visible while fetching (caching)
 
       try {
         const OMEGA_RPC = "https://0x4e454228.rpc.aurora-cloud.dev";
@@ -290,7 +290,7 @@ function App() {
     // 2. SOL -> OMEGA Direction
     if (!solanaAddress) return;
     setStatus({ type: 'info', msg: 'Fetching NFTs from Mainnet...' });
-    setNfts([]); // Clear previous
+    // Keep old NFTs visible while fetching (caching)
 
     try {
       // Use Helius DAS API for faster NFT fetching with cached images

@@ -6,6 +6,31 @@ const { mintTo, getOrCreateAssociatedTokenAccount, transfer } = require('@solana
 const { ethers, JsonRpcProvider, Wallet, Contract } = require('ethers');
 const fs = require('fs');
 
+// File to persist processed NFT signatures (prevents duplicate minting on restart)
+const PROCESSED_SIGS_FILE = path.join(__dirname, 'processed_nft_sigs.json');
+
+// Load previously processed signatures
+let processedNftSignatures = new Set();
+try {
+    if (fs.existsSync(PROCESSED_SIGS_FILE)) {
+        const data = JSON.parse(fs.readFileSync(PROCESSED_SIGS_FILE, 'utf-8'));
+        processedNftSignatures = new Set(data);
+        console.log(`Loaded ${processedNftSignatures.size} processed NFT signatures from disk.`);
+    }
+} catch (e) {
+    console.warn("Could not load processed signatures file:", e.message);
+}
+
+// Save processed signature to disk
+function saveProcessedSignature(sig) {
+    processedNftSignatures.add(sig);
+    try {
+        fs.writeFileSync(PROCESSED_SIGS_FILE, JSON.stringify([...processedNftSignatures]), 'utf-8');
+    } catch (e) {
+        console.error("Failed to save processed signature:", e.message);
+    }
+}
+
 // Health check server for Render
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
@@ -140,6 +165,29 @@ async function main() {
 
             console.log(`Collection detected: ${collectionName}`);
 
+            // 2.5. DUPLICATE CHECK: Check if this Solana mint already exists on Omega
+            console.log("Checking for existing wrapped NFT on Omega...");
+            try {
+                const tokenCounter = await targetContract.tokenCounter();
+                const checkAbi = ['function originalSolanaMint(uint256) view returns (string)'];
+                const checkContract = new Contract(targetContract.target, checkAbi, omegaProvider);
+                
+                for (let i = 0; i < tokenCounter; i++) {
+                    try {
+                        const existingMint = await checkContract.originalSolanaMint(i);
+                        if (existingMint === mintAddress) {
+                            console.log(`[SKIP] NFT already exists on Omega! Token ID: ${i}, Solana Mint: ${mintAddress}`);
+                            return; // Don't mint duplicate
+                        }
+                    } catch (e) {
+                        // Token might be burned, skip
+                    }
+                }
+                console.log("No existing wrapped NFT found, proceeding to mint...");
+            } catch (e) {
+                console.warn("Duplicate check failed, proceeding anyway:", e.message);
+            }
+
             // 3. Mint on Omega
             console.log("Step 2: Sending Mint Transaction...");
             const tx = await targetContract.mint(targetOmegaAddress, metadata.uri, mintAddress);
@@ -243,6 +291,12 @@ async function main() {
                         // Valid TX found
                         console.log(`[Debug] Processing ${sigInfo.signature} (Meta OK)`);
 
+                        // DUPLICATE PREVENTION: Skip if already processed
+                        if (processedNftSignatures.has(sigInfo.signature)) {
+                            console.log(`[Skip] Signature ${sigInfo.signature.slice(0,8)}... already processed. Skipping.`);
+                            continue;
+                        }
+
                         console.log("Calling extractMemo...");
                         const memo = extractMemo(tx);
                         console.log("Memo extracted:", memo);
@@ -253,6 +307,9 @@ async function main() {
                         if (transfer && memo) {
                             console.log(`[NFT Bridge] Deposit Detected: ${transfer.mint} -> ${memo}`);
                             await processNftBridge(transfer.mint, memo);
+                            
+                            // Save this signature as processed to prevent future duplicates
+                            saveProcessedSignature(sigInfo.signature);
                         }
 
                         // Update watermark to prevent re-processing
@@ -273,25 +330,14 @@ async function main() {
         // Start the loop
         pollNftBridge();
     }
+    // --- Solana Token Bridge: Poll for burns (Solana -> Omega) ---
     if (solanaInfo) {
         const mintPubkey = new PublicKey(solanaInfo.mintAddress);
-
-        // Listen to logs for the Mint Address (Burn instructions usually involve the mint)
-        // Note: For SPL Token, logs might not always contain the mint address nicely on the top level unless indexed.
-        // A better way for "Burn" is to listen to the Token Program logs generally, but that's too noisy.
-        // We will listen to the Relayer account if we were using a Vault. 
-        // For "Burn", we have to accept we might need to poll signatures or use an indexing service (Helius/Shyft) for production.
-        // For this demo: We poll `getSignaturesForAddress` of the Mint/Token Account? 
-        // No, `Burn` instructions don't always show up on Mint's history in older RPCs? On devnet it should work.
-        // ACTUALLY: The standard "Burn" emits a log "Instruction: Burn".
-
-        console.log("Starting Solana Poll Loop...");
+        console.log("Starting Solana Token Burn Poll Loop...");
 
         let lastSignature = null;
         setInterval(async () => {
             try {
-                // Fetch recent transaction signatures on the Mint
-                // Note: The Mint address appears in Burn transactions.
                 const signatures = await solConnection.getSignaturesForAddress(mintPubkey, { limit: 10, until: lastSignature });
 
                 for (const sigInfo of signatures.reverse()) {
@@ -300,10 +346,6 @@ async function main() {
 
                     const tx = await solConnection.getTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 });
                     if (!tx) continue;
-
-                    // Analyze Transaction for Burn + Memo
-                    // 1. Check for Burn Instruction
-                    // 2. Check for Memo Instruction
 
                     const memo = extractMemo(tx);
                     const burnAmount = extractBurnAmount(tx, mintPubkey);
@@ -314,16 +356,16 @@ async function main() {
                     }
                 }
             } catch (e) { console.error("Error polling Solana:", e.message); }
-        }, 5000); // Poll every 5 seconds
+        }, 5000);
     }
 
 
 
-    // --- Omega Listener (Lock -> Mint on Solana) ---
+    // --- Omega Token Listener (Lock -> Mint on Solana) ---
     if (omegaContract) {
-        console.log("Starting Omega Event Listener...");
+        console.log("Starting Omega Token Event Listener...");
         omegaContract.on("Locked", async (sender, amount, solanaAddress, event) => {
-            console.log(`[Omega -> Solana] Detected Lock: ${ethers.formatEther(amount)} form ${sender} to ${solanaAddress}`);
+            console.log(`[Omega -> Solana] Detected Lock: ${ethers.formatEther(amount)} from ${sender} to ${solanaAddress}`);
             await mintOnSolana(solanaAddress, amount);
         });
     }
