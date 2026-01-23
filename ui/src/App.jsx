@@ -7,7 +7,7 @@ import { ArrowRightLeft, Wallet, ShieldCheck, Loader2, Link, Book } from 'lucide
 import { motion } from 'framer-motion';
 
 // Configuration
-const SOLANA_MINT_ADDRESS = "6oSdZKPtY2SFptMHYnEjHU4MN2EYSNBHRVWgmDiJXjpy";
+const SOLANA_MINT_ADDRESS = "FmHnkkzEGchswea7AX1KcM6hsNMF7uBzamVkoCvnFMby";
 const SOLANA_RPC_DEVNET = "https://api.devnet.solana.com";
 const SOLANA_RPC_MAINNET = "https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082";
 // Hardcoded Relayer Address (Vault)
@@ -16,7 +16,7 @@ const RELAYER_SOLANA_ADDRESS = "4XJ4Mrkn8Jn8vaJKxmUQWSKHQdwaDiKsDDxeNexodiEq";
 // Note: We need the ABI for OmegaBridge. 
 // Since we are in the UI folder, we can hardcode the minimal ABI or import. 
 // For simplicity in this demo, I'll inline the minimal ABI.
-const OMEGA_BRIDGE_ADDRESS = "0x3E78D4Cd1026a90A582861E55BFf757361863ED8";
+const OMEGA_BRIDGE_ADDRESS = "0x66e5BaCbf34974fEfdd9d7DB5bA07df0Bfd4591f";
 const OMEGA_RPC_URL = "https://0x4e454228.rpc.aurora-cloud.dev";
 const OMEGA_CHAIN_ID = 1313161768;
 
@@ -80,6 +80,11 @@ function App() {
   const [selectedNfts, setSelectedNfts] = useState([]); // Array for Bulk
   const [nfts, setNfts] = useState([]);
   
+  // Manual receiver address state
+  const [useManualReceiver, setUseManualReceiver] = useState(false);
+  const [manualSolanaReceiver, setManualSolanaReceiver] = useState('');
+  const [manualOmegaReceiver, setManualOmegaReceiver] = useState('');
+  
   // Ref to track fetch version and cancel stale requests
   const fetchIdRef = React.useRef(0);
 
@@ -104,7 +109,7 @@ function App() {
       }
       else if (direction === 'SOL_TO_OMEGA' && solanaAddress && window.solana) {
         // ... (existing logic) ...
-        const connection = new Connection(SOLANA_RPC_DEVNET);
+        const connection = new Connection(SOLANA_RPC_MAINNET);
         const mint = new PublicKey(SOLANA_MINT_ADDRESS);
         const owner = new PublicKey(solanaAddress);
         try {
@@ -385,13 +390,19 @@ function App() {
   // Connection Handlers
   const connectPhantom = async () => {
     try {
-      if (window.solana && window.solana.isPhantom) {
-        const resp = await window.solana.connect();
+      // Check for Phantom in multiple locations (for multi-wallet compatibility)
+      const provider = window.phantom?.solana || window.solana;
+      
+      if (provider?.isPhantom) {
+        const resp = await provider.connect();
         setSolanaAddress(resp.publicKey.toString());
       } else {
-        alert("Phantom Wallet not found!");
+        alert("Phantom Wallet not found! Please install Phantom extension.");
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { 
+      console.error("Phantom connection error:", err); 
+      alert("Failed to connect Phantom: " + err.message);
+    }
   };
 
   const connectMetamask = async () => {
@@ -451,13 +462,21 @@ function App() {
     if (activeTab === 'tokens' && (!amount || parseFloat(amount) <= 0)) return alert("Invalid amount");
     if (activeTab === 'nfts' && selectedNfts.length === 0) return alert("Select at least one NFT");
 
+    // Compute effective addresses (manual overrides wallet if provided)
+    const effectiveSolanaReceiver = useManualReceiver && manualSolanaReceiver 
+      ? manualSolanaReceiver 
+      : solanaAddress;
+    const effectiveOmegaReceiver = useManualReceiver && manualOmegaReceiver 
+      ? manualOmegaReceiver 
+      : omegaAddress;
+
     setLoading(true);
     setStatus({ type: 'info', msg: 'Processing... Please approve in wallet.' });
 
     try {
       if (direction === 'OMEGA_TO_SOL') {
-        if (!omegaAddress) throw new Error("Connect Omega Wallet");
-        if (!solanaAddress) throw new Error("Connect Solana Wallet (destination)");
+        if (!omegaAddress) throw new Error("Connect Omega Wallet to sign transaction");
+        if (!effectiveSolanaReceiver) throw new Error("Enter Solana receiver address");
 
         let provider;
         if (window.ethereum.providers) {
@@ -473,7 +492,7 @@ function App() {
 
         if (activeTab === 'tokens') {
           const amountWei = ethers.parseEther(amount);
-          const tx = await contract.lock(solanaAddress, { value: amountWei });
+          const tx = await contract.lock(effectiveSolanaReceiver, { value: amountWei });
 
           setStatus({ type: 'info', msg: 'Transaction Sent! Waiting for confirmation...' });
           await tx.wait();
@@ -488,7 +507,7 @@ function App() {
             if (!nft.contract) continue;
             const nftContract = new ethers.Contract(nft.contract, BurnABI, signer);
             try {
-              const tx = await nftContract.burnToSolana(nft.mint, solanaAddress);
+              const tx = await nftContract.burnToSolana(nft.mint, effectiveSolanaReceiver);
               setStatus({ type: 'info', msg: `Burning ${nft.name}... Waiting for confirmation...` });
               await tx.wait();
             } catch (err) {
@@ -504,11 +523,11 @@ function App() {
 
       } else {
         // SOL -> OMEGA
-        if (!solanaAddress) throw new Error("Connect Solana Wallet");
-        if (!omegaAddress) throw new Error("Connect Omega Wallet (destination)");
+        if (!solanaAddress) throw new Error("Connect Solana Wallet to sign transaction");
+        if (!effectiveOmegaReceiver) throw new Error("Enter Omega receiver address");
 
         // USE DYNAMIC RPC
-        const rpcUrl = activeTab === 'nfts' ? SOLANA_RPC_MAINNET : SOLANA_RPC_DEVNET;
+        const rpcUrl = SOLANA_RPC_MAINNET; // Both NFTs and tokens use mainnet
         const connection = new Connection(rpcUrl, 'confirmed');
         const pubKey = new PublicKey(solanaAddress);
         const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
@@ -519,7 +538,7 @@ function App() {
         // Common Memo (Target Omega Address)
         tx.add(new TransactionInstruction({
           keys: [{ pubkey: pubKey, isSigner: true, isWritable: true }],
-          data: Buffer.from(omegaAddress, 'utf-8'),
+          data: Buffer.from(effectiveOmegaReceiver, 'utf-8'),
           programId: new PublicKey("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo")
         }));
 
@@ -636,7 +655,7 @@ function App() {
               <p>Transfer tokens securely between Omega Network and Solana.</p>
             </div>
             <div className={`network-badge ${activeTab}`}>
-              {activeTab === 'tokens' ? '🟢 Devnet' : '🟣 Mainnet'}
+              {activeTab === 'tokens' ? '🟣 Mainnet' : '🟣 Mainnet'}
             </div>
           </div>
 
@@ -656,57 +675,178 @@ function App() {
             </button>
           </div>
 
-          {/* Wallet Connection (Common) */}
-          <div className="wallet-section">
-            {direction === 'OMEGA_TO_SOL' ? (
-              <>
+          {/* Wallet Connection */}
+          <div className="wallet-section" style={{ flexDirection: 'column', gap: '1rem' }}>
+            {/* Source Wallet */}
+            <div style={{ width: '100%' }}>
+              <label style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.25rem', display: 'block' }}>
+                {direction === 'OMEGA_TO_SOL' ? 'Source (Omega)' : 'Source (Solana)'}
+              </label>
+              {direction === 'OMEGA_TO_SOL' ? (
                 <motion.button
                   layout
-                  key="metamask"
                   transition={{ type: "spring", stiffness: 300, damping: 25 }}
                   className={`wallet-btn ${omegaAddress ? 'connected' : ''}`}
                   onClick={connectMetamask}
+                  style={{ width: '100%' }}
                 >
                   <Wallet size={18} />
                   {omegaAddress ? `${omegaAddress.slice(0, 6)}...${omegaAddress.slice(-4)}` : "Connect Metamask"}
                 </motion.button>
-
+              ) : (
                 <motion.button
                   layout
-                  key="phantom"
                   transition={{ type: "spring", stiffness: 300, damping: 25 }}
                   className={`wallet-btn ${solanaAddress ? 'connected' : ''}`}
                   onClick={connectPhantom}
+                  style={{ width: '100%' }}
                 >
                   <Wallet size={18} />
                   {solanaAddress ? `${solanaAddress.slice(0, 6)}...${solanaAddress.slice(-4)}` : "Connect Phantom"}
                 </motion.button>
-              </>
-            ) : (
-              <>
-                <motion.button
-                  layout
-                  key="phantom"
-                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                  className={`wallet-btn ${solanaAddress ? 'connected' : ''}`}
-                  onClick={connectPhantom}
-                >
-                  <Wallet size={18} />
-                  {solanaAddress ? `${solanaAddress.slice(0, 6)}...${solanaAddress.slice(-4)}` : "Connect Phantom"}
-                </motion.button>
+              )}
+            </div>
 
-                <motion.button
-                  layout
-                  key="metamask"
-                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                  className={`wallet-btn ${omegaAddress ? 'connected' : ''}`}
-                  onClick={connectMetamask}
-                >
-                  <Wallet size={18} />
-                  {omegaAddress ? `${omegaAddress.slice(0, 6)}...${omegaAddress.slice(-4)}` : "Connect Metamask"}
-                </motion.button>
-              </>
-            )}
+            {/* Receiver Wallet */}
+            <div style={{ width: '100%' }}>
+              <label style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.25rem', display: 'block' }}>
+                {direction === 'OMEGA_TO_SOL' ? 'Receiver (Solana)' : 'Receiver (Omega)'}
+              </label>
+              
+              {direction === 'OMEGA_TO_SOL' ? (
+                <>
+                  {!useManualReceiver && solanaAddress ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <motion.button
+                        layout
+                        transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                        className="wallet-btn connected"
+                        onClick={connectPhantom}
+                        style={{ flex: 1 }}
+                      >
+                        <Wallet size={18} />
+                        {`${solanaAddress.slice(0, 6)}...${solanaAddress.slice(-4)}`}
+                      </motion.button>
+                      <span 
+                        onClick={() => { setUseManualReceiver(true); setManualSolanaReceiver(''); }}
+                        style={{ fontSize: '0.75rem', color: '#8b5cf6', cursor: 'pointer', textDecoration: 'underline', whiteSpace: 'nowrap' }}
+                      >
+                        Enter Manually
+                      </span>
+                    </div>
+                  ) : useManualReceiver ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="text"
+                        placeholder="Enter Solana wallet address..."
+                        value={manualSolanaReceiver}
+                        onChange={(e) => setManualSolanaReceiver(e.target.value)}
+                        style={{ flex: 1, fontSize: '0.85rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #555', background: 'rgba(255,255,255,0.1)', color: '#333' }}
+                      />
+                      {solanaAddress && (
+                        <span 
+                          onClick={() => { setUseManualReceiver(false); setManualSolanaReceiver(''); }}
+                          style={{ fontSize: '0.75rem', color: '#8b5cf6', cursor: 'pointer', textDecoration: 'underline', whiteSpace: 'nowrap' }}
+                        >
+                          Use Wallet
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <motion.button
+                        layout
+                        transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                        className="wallet-btn"
+                        onClick={connectPhantom}
+                        style={{ width: '100%' }}
+                      >
+                        <Wallet size={18} />
+                        Connect Phantom
+                      </motion.button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div style={{ flex: 1, height: '1px', background: '#333' }}></div>
+                        <span style={{ fontSize: '0.75rem', color: '#666' }}>or</span>
+                        <div style={{ flex: 1, height: '1px', background: '#333' }}></div>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Enter wallet address..."
+                        value={manualSolanaReceiver}
+                        onChange={(e) => { setManualSolanaReceiver(e.target.value); setUseManualReceiver(true); }}
+                        style={{ width: '100%', fontSize: '0.85rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #555', background: 'rgba(255,255,255,0.1)', color: '#333' }}
+                      />
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {!useManualReceiver && omegaAddress ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <motion.button
+                        layout
+                        transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                        className="wallet-btn connected"
+                        onClick={connectMetamask}
+                        style={{ flex: 1 }}
+                      >
+                        <Wallet size={18} />
+                        {`${omegaAddress.slice(0, 6)}...${omegaAddress.slice(-4)}`}
+                      </motion.button>
+                      <span 
+                        onClick={() => { setUseManualReceiver(true); setManualOmegaReceiver(''); }}
+                        style={{ fontSize: '0.75rem', color: '#8b5cf6', cursor: 'pointer', textDecoration: 'underline', whiteSpace: 'nowrap' }}
+                      >
+                        Enter Manually
+                      </span>
+                    </div>
+                  ) : useManualReceiver ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="text"
+                        placeholder="0x..."
+                        value={manualOmegaReceiver}
+                        onChange={(e) => setManualOmegaReceiver(e.target.value)}
+                        style={{ flex: 1, fontSize: '0.85rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #555', background: 'rgba(255,255,255,0.1)', color: '#333' }}
+                      />
+                      {omegaAddress && (
+                        <span 
+                          onClick={() => { setUseManualReceiver(false); setManualOmegaReceiver(''); }}
+                          style={{ fontSize: '0.75rem', color: '#8b5cf6', cursor: 'pointer', textDecoration: 'underline', whiteSpace: 'nowrap' }}
+                        >
+                          Use Wallet
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <motion.button
+                        layout
+                        transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                        className="wallet-btn"
+                        onClick={connectMetamask}
+                        style={{ width: '100%' }}
+                      >
+                        <Wallet size={18} />
+                        Connect Metamask
+                      </motion.button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div style={{ flex: 1, height: '1px', background: '#333' }}></div>
+                        <span style={{ fontSize: '0.75rem', color: '#666' }}>or</span>
+                        <div style={{ flex: 1, height: '1px', background: '#333' }}></div>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Enter wallet address..."
+                        value={manualOmegaReceiver}
+                        onChange={(e) => { setManualOmegaReceiver(e.target.value); setUseManualReceiver(true); }}
+                        style={{ width: '100%', fontSize: '0.85rem', padding: '0.6rem', borderRadius: '8px', border: '1px solid #555', background: 'rgba(255,255,255,0.1)', color: '#333' }}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           {activeTab === 'tokens' ? (
@@ -778,7 +918,7 @@ function App() {
 
           {/* Common Bridge Controls (Direction & Action) */}
           <div className="switch-container">
-            <button className="switch-btn" onClick={() => setDirection(d => d === 'OMEGA_TO_SOL' ? 'SOL_TO_OMEGA' : 'OMEGA_TO_SOL')}>
+            <button className="switch-btn" onClick={() => { setSelectedNfts([]); setDirection(d => d === 'OMEGA_TO_SOL' ? 'SOL_TO_OMEGA' : 'OMEGA_TO_SOL'); }}>
               <ArrowRightLeft size={20} />
             </button>
           </div>

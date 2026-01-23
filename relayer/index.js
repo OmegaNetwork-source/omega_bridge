@@ -8,6 +8,7 @@ const fs = require('fs');
 
 // File to persist processed NFT signatures (prevents duplicate minting on restart)
 const PROCESSED_SIGS_FILE = path.join(__dirname, 'processed_nft_sigs.json');
+const PROCESSED_BURNS_FILE = path.join(__dirname, 'processed_omega_burns.json');
 
 // Load previously processed signatures
 let processedNftSignatures = new Set();
@@ -21,6 +22,18 @@ try {
     console.warn("Could not load processed signatures file:", e.message);
 }
 
+// Load previously processed Omega burns
+let processedOmegaBurns = new Set();
+try {
+    if (fs.existsSync(PROCESSED_BURNS_FILE)) {
+        const data = JSON.parse(fs.readFileSync(PROCESSED_BURNS_FILE, 'utf-8'));
+        processedOmegaBurns = new Set(data);
+        console.log(`Loaded ${processedOmegaBurns.size} processed Omega burns from disk.`);
+    }
+} catch (e) {
+    console.warn("Could not load processed burns file:", e.message);
+}
+
 // Save processed signature to disk
 function saveProcessedSignature(sig) {
     processedNftSignatures.add(sig);
@@ -28,6 +41,16 @@ function saveProcessedSignature(sig) {
         fs.writeFileSync(PROCESSED_SIGS_FILE, JSON.stringify([...processedNftSignatures]), 'utf-8');
     } catch (e) {
         console.error("Failed to save processed signature:", e.message);
+    }
+}
+
+// Save processed burn to disk (tokenId-txHash format)
+function saveProcessedBurn(burnId) {
+    processedOmegaBurns.add(burnId);
+    try {
+        fs.writeFileSync(PROCESSED_BURNS_FILE, JSON.stringify([...processedOmegaBurns]), 'utf-8');
+    } catch (e) {
+        console.error("Failed to save processed burn:", e.message);
     }
 }
 
@@ -127,10 +150,20 @@ async function main() {
     console.log(`  Solar Sentries Contract: ${omegaNftInfo?.address}`);
     console.log(`  Secret Serpent Contract: ${omegaSssInfo?.address}`);
 
+    // In-memory lock to prevent concurrent processing of same Solana mint
+    const processingMints = new Set();
+
     // ...
 
     async function processNftBridge(mintAddress, targetOmegaAddress) {
         console.log(`Processing NFT Bridge: ${mintAddress} -> ${targetOmegaAddress}`);
+
+        // CONCURRENT PROCESSING LOCK: Prevent multiple simultaneous mints for same NFT
+        if (processingMints.has(mintAddress)) {
+            console.log(`[SKIP] Mint ${mintAddress} is already being processed. Skipping.`);
+            return;
+        }
+        processingMints.add(mintAddress);
 
         try {
             // 1. Fetch Metadata from Solana (MAINNET)
@@ -166,21 +199,34 @@ async function main() {
             console.log(`Collection detected: ${collectionName}`);
 
             // 2.5. DUPLICATE CHECK: Check if this Solana mint already exists on Omega
+            // Optimized: Check in batches and from newest to oldest (duplicates more likely recent)
             console.log("Checking for existing wrapped NFT on Omega...");
             try {
-                const tokenCounter = await targetContract.tokenCounter();
+                const tokenCounter = Number(await targetContract.tokenCounter());
                 const checkAbi = ['function originalSolanaMint(uint256) view returns (string)'];
                 const checkContract = new Contract(targetContract.target, checkAbi, omegaProvider);
                 
-                for (let i = 0; i < tokenCounter; i++) {
-                    try {
-                        const existingMint = await checkContract.originalSolanaMint(i);
-                        if (existingMint === mintAddress) {
-                            console.log(`[SKIP] NFT already exists on Omega! Token ID: ${i}, Solana Mint: ${mintAddress}`);
+                // Check in batches of 5, from newest to oldest
+                const BATCH_SIZE = 5;
+                for (let start = tokenCounter - 1; start >= 0; start -= BATCH_SIZE) {
+                    const batchEnd = Math.max(0, start - BATCH_SIZE + 1);
+                    const promises = [];
+                    
+                    for (let i = start; i >= batchEnd; i--) {
+                        promises.push(
+                            checkContract.originalSolanaMint(i)
+                                .then(mint => ({ id: i, mint }))
+                                .catch(() => null) // Token might be burned
+                        );
+                    }
+                    
+                    const results = await Promise.all(promises);
+                    
+                    for (const result of results) {
+                        if (result && result.mint === mintAddress) {
+                            console.log(`[SKIP] NFT already exists on Omega! Token ID: ${result.id}, Solana Mint: ${mintAddress}`);
                             return; // Don't mint duplicate
                         }
-                    } catch (e) {
-                        // Token might be burned, skip
                     }
                 }
                 console.log("No existing wrapped NFT found, proceeding to mint...");
@@ -197,6 +243,9 @@ async function main() {
 
         } catch (e) {
             console.error("Failed to bridge NFT:", e);
+        } finally {
+            // Always release the lock when done
+            processingMints.delete(mintAddress);
         }
     }
 
@@ -244,7 +293,6 @@ async function main() {
         console.log(`Starting NFT Listener on Relayer Wallet: ${relayerPubkey.toString()}...`);
         console.log("Connecting to Mainnet RPC:", SOLANA_RPC_MAINNET);
 
-        let lastNftSignature = null;
         let isPolling = false;
 
         // Heartbeat to prove life in logs
@@ -255,12 +303,14 @@ async function main() {
             isPolling = true;
 
             try {
-                // Listen on MAINNET
-                const signatures = await solMainnetConnection.getSignaturesForAddress(relayerPubkey, { limit: 20, until: lastNftSignature });
+                // Listen on MAINNET - get latest signatures (newest first by default)
+                // Don't use 'until' or 'before' - just get the latest 20 signatures each time
+                // We rely on processedNftSignatures Set to skip already-processed ones
+                const signatures = await solMainnetConnection.getSignaturesForAddress(relayerPubkey, { limit: 20 });
 
                 if (signatures.length > 0) console.log(`[Debug] Found ${signatures.length} signatures. Processing...`);
 
-                // Process oldest first
+                // Process oldest first (reverse the array since API returns newest first)
                 for (const sigInfo of signatures.reverse()) {
                     if (sigInfo.err) continue;
 
@@ -312,9 +362,6 @@ async function main() {
                             saveProcessedSignature(sigInfo.signature);
                         }
 
-                        // Update watermark to prevent re-processing
-                        lastNftSignature = sigInfo.signature;
-
                     } catch (err) {
                         console.error("Error processing tx:", sigInfo.signature, err.message);
                     }
@@ -334,16 +381,40 @@ async function main() {
     if (solanaInfo) {
         const mintPubkey = new PublicKey(solanaInfo.mintAddress);
         console.log("Starting Solana Token Burn Poll Loop...");
-
+        
         let lastSignature = null;
+        const processedFile = path.resolve(__dirname, 'processed_token_sigs.json');
+        
+        // Load last processed signature
+        if (fs.existsSync(processedFile)) {
+            try {
+                const loaded = JSON.parse(fs.readFileSync(processedFile, 'utf8'));
+                if (loaded.lastSignature) {
+                    lastSignature = loaded.lastSignature;
+                    console.log(`Loaded last processed signature: ${lastSignature}`);
+                }
+            } catch (e) { console.error("Error loading token sigs:", e.message); }
+        }
+
         setInterval(async () => {
             try {
-                const signatures = await solConnection.getSignaturesForAddress(mintPubkey, { limit: 10, until: lastSignature });
-
+                // Fetch signatures newer than lastSignature
+                // If lastSignature is null, it fetches latest. 
+                // We should probably limit to avoid processing *everything* on fresh start, 
+                // but for now 20 is fine.
+                const options = { limit: 20 };
+                if (lastSignature) {
+                    options.until = lastSignature;
+                }
+                
+                const signatures = await solConnection.getSignaturesForAddress(mintPubkey, options);
+                
+                // Process oldest first
                 for (const sigInfo of signatures.reverse()) {
                     if (sigInfo.err) continue;
-                    lastSignature = sigInfo.signature;
-
+                    
+                    console.log(`Checking sig: ${sigInfo.signature}`);
+                    
                     const tx = await solConnection.getTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 });
                     if (!tx) continue;
 
@@ -354,9 +425,13 @@ async function main() {
                         console.log(`[Solana -> Omega] Detected Burn: ${burnAmount.toString()} (raw) to ${memo}`);
                         await releaseOnOmega(memo, burnAmount);
                     }
+                    
+                    // Update state
+                    lastSignature = sigInfo.signature;
+                    fs.writeFileSync(processedFile, JSON.stringify({ lastSignature }));
                 }
             } catch (e) { console.error("Error polling Solana:", e.message); }
-        }, 5000);
+        }, 10000); // 10s poll
     }
 
 
@@ -371,20 +446,76 @@ async function main() {
     }
 
     // --- Omega NFT Listener (Burn -> Unlock on Solana) ---
-    const handleOmegaBurn = async (from, tokenId, solanaMint, solanaDestination, event) => {
+    const handleOmegaBurn = async (from, tokenId, solanaMint, solanaDestination, txHash) => {
+        // Create unique burn ID for deduplication
+        const burnId = `${tokenId.toString()}-${txHash || 'event'}`;
+        
+        // Check if already processed
+        if (processedOmegaBurns.has(burnId)) {
+            console.log(`[Skip] Burn ${burnId} already processed. Skipping.`);
+            return;
+        }
+        
         console.log(`[Omega -> Solana] Burn Detected: TokenID ${tokenId} by ${from}`);
         console.log(`Target: ${solanaDestination}, Mint: ${solanaMint}`);
+        
         await unlockNftOnSolana(solanaMint, solanaDestination);
+        
+        // Save as processed after successful unlock
+        saveProcessedBurn(burnId);
     };
 
     if (omegaNftContract) {
         console.log("Listening for Solar Sentries Burns...");
-        omegaNftContract.on("WrappedBurned", handleOmegaBurn);
+        omegaNftContract.on("WrappedBurned", (from, tokenId, solanaMint, solanaDestination, event) => {
+            handleOmegaBurn(from, tokenId, solanaMint, solanaDestination, event?.transactionHash);
+        });
     }
     if (omegaSssContract) {
         console.log("Listening for Secret Serpent Burns...");
-        omegaSssContract.on("WrappedBurned", handleOmegaBurn);
+        omegaSssContract.on("WrappedBurned", (from, tokenId, solanaMint, solanaDestination, event) => {
+            handleOmegaBurn(from, tokenId, solanaMint, solanaDestination, event?.transactionHash);
+        });
     }
+
+    // --- FALLBACK: Poll for missed Omega burn events (every 60s) ---
+    const pollOmegaBurns = async () => {
+        console.log("[Burn Poll] Checking for missed burn events...");
+        
+        const contracts = [
+            { contract: omegaNftContract, name: "Solar Sentries" },
+            { contract: omegaSssContract, name: "Secret Serpent Society" }
+        ];
+        
+        for (const { contract, name } of contracts) {
+            if (!contract) continue;
+            
+            try {
+                // Query last 100 blocks for burn events
+                const currentBlock = await omegaProvider.getBlockNumber();
+                const fromBlock = Math.max(0, currentBlock - 100);
+                
+                const filter = contract.filters.WrappedBurned();
+                const events = await contract.queryFilter(filter, fromBlock, currentBlock);
+                
+                for (const event of events) {
+                    const [from, tokenId, solanaMint, solanaDestination] = event.args;
+                    await handleOmegaBurn(from, tokenId, solanaMint, solanaDestination, event.transactionHash);
+                }
+                
+                if (events.length > 0) {
+                    console.log(`[Burn Poll] Found ${events.length} burns in ${name}`);
+                }
+            } catch (e) {
+                console.warn(`[Burn Poll] Error checking ${name}:`, e.message);
+            }
+        }
+    };
+    
+    // Run burn poll every 60 seconds
+    setInterval(pollOmegaBurns, 60000);
+    // Also run once on startup
+    setTimeout(pollOmegaBurns, 5000);
 
     async function unlockNftOnSolana(mintStr, destinationStr) {
         try {
@@ -399,6 +530,14 @@ async function main() {
                 mint,
                 relayerSolana.publicKey
             );
+
+            // 1.5. BALANCE CHECK: Verify relayer actually holds this NFT
+            if (relayerAta.amount === 0n) {
+                console.error(`[ERROR] Relayer doesn't hold NFT ${mintStr}! Cannot unlock.`);
+                console.error(`Relayer ATA: ${relayerAta.address.toString()} has 0 balance`);
+                return;
+            }
+            console.log(`Relayer holds NFT (Balance: ${relayerAta.amount.toString()})`);
 
             // 2. Get User ATA (Dest)
             const userAta = await getOrCreateAssociatedTokenAccount(
@@ -478,7 +617,7 @@ async function main() {
                 const mintPubkey = new PublicKey(solanaInfo.mintAddress);
 
                 // Create fresh connection for each attempt to get fresh blockhash
-                const freshConnection = new Connection(SOLANA_RPC, {
+                const freshConnection = new Connection(SOLANA_RPC_MAINNET, {
                     commitment: 'confirmed',
                     confirmTransactionInitialTimeout: 60000
                 });
@@ -573,24 +712,43 @@ function extractMemo(tx) {
             if (ix.parsed && typeof ix.parsed === 'string') {
                 return ix.parsed;
             }
-            if (ix.parsed) { // Sometimes object?
-                console.log("Memo is object?", ix.parsed);
+            if (ix.parsed) { 
+                console.log("Memo parsed object:", JSON.stringify(ix.parsed));
             }
 
             let dataBuffer = ix.data;
-            if (!dataBuffer) continue; // If parsed is missing and data is missing
+            if (!dataBuffer) continue; 
 
+            // Handle Base58 encoded string data (common in raw RPC responses)
             if (typeof ix.data === 'string') {
                 try {
                     dataBuffer = bs58.decode(ix.data);
                 } catch (e) {
-                    console.log("Memo decode failed", e);
-                    continue;
+                    // Try simple utf8 buffer if bs58 fails? Unlikely for RPC but possible
+                    dataBuffer = Buffer.from(ix.data);
                 }
             }
-            return new TextDecoder().decode(dataBuffer);
+
+            try {
+                const memo = new TextDecoder().decode(dataBuffer);
+                // Clean up any null bytes or non-printable chars
+                return memo.replace(/\0/g, '').trim(); 
+            } catch (e) {
+                console.log("Memo decode failed", e);
+            }
         }
     }
+    
+    // Fallback: Check logs again but looser
+    if (tx.meta && tx.meta.logMessages) {
+        for (const log of tx.meta.logMessages) {
+             // Sometimes logs are "Program log: Memo (len ..): "
+             // But sometimes just have the data if it's printed
+             const match = log.match(/Memo \(len \d+\): "(.+)"/);
+             if (match) return match[1];
+        }
+    }
+
     return null;
 }
 
@@ -606,6 +764,21 @@ function extractBurnAmount(tx, mintPubkey) {
     // We expect 1 account (the user's ATA) to decrease in balance, and 0 destination.
 
     if (!tx.meta || !tx.meta.preTokenBalances || !tx.meta.postTokenBalances) return 0n;
+
+    // CRITICAL: Ensure this was actually a BURN instruction, not just a transfer
+    // Check logs for "Instruction: Burn"
+    const hasBurnInstruction = tx.meta.logMessages?.some(log => 
+        log.includes('Instruction: Burn') || 
+        log.includes('Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success') // Fallback if instruction name hidden?
+    );
+
+    // If we can't find clear evidence of a burn, strict check logs for "Burn"
+    if (!tx.meta.logMessages?.some(l => l.includes('Instruction: Burn'))) {
+        // Double check: Maybe it's a BurnChecked?
+        if (!tx.meta.logMessages?.some(l => l.includes('Instruction: BurnChecked'))) {
+            return 0n;
+        }
+    }
 
     // Find the relevant ATA change
     for (const pre of tx.meta.preTokenBalances) {
