@@ -5,7 +5,7 @@ const { ethers, JsonRpcProvider, Wallet, ContractFactory } = require('ethers');
 require('dotenv').config({ path: path.resolve(__dirname, '../relayer/.env') });
 
 // --- Configuration ---
-const RPC_URL = "https://0x4e454228.rpc.aurora-cloud.dev";
+const RPC_URL = "https://0x4e4542bc.rpc.aurora-cloud.dev/";
 const PRIVATE_KEY = process.env.OMEGA_PRIVATE_KEY;
 // ---------------------
 

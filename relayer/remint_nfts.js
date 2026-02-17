@@ -2,7 +2,7 @@ const { ethers, JsonRpcProvider, Wallet, Contract } = require('ethers');
 const fs = require('fs');
 require('dotenv').config();
 
-const OMEGA_RPC = 'https://0x4e454228.rpc.aurora-cloud.dev';
+const OMEGA_RPC = 'https://0x4e4542bc.rpc.aurora-cloud.dev/';
 
 async function main() {
     const nftInfo = JSON.parse(fs.readFileSync('omega_nft_deployment.json'));

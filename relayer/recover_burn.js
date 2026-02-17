@@ -5,8 +5,8 @@ const bs58 = require('bs58');
 
 // Config
 const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
-const OMEGA_RPC = 'https://0x4e454228.rpc.aurora-cloud.dev';
-const OMEGA_BRIDGE_ADDRESS = '0x66e5BaCbf34974fEfdd9d7DB5bA07df0Bfd4591f';
+const OMEGA_RPC = 'https://0x4e4542bc.rpc.aurora-cloud.dev/';
+const OMEGA_BRIDGE_ADDRESS = '0xdC43DCAE0c13f11f425cAB7240A035137B2f6f6F';
 const MINT_ADDRESS = 'FmHnkkzEGchswea7AX1KcM6hsNMF7uBzamVkoCvnFMby';
 
 // Transaction to recover

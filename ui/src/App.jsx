@@ -16,9 +16,9 @@ const RELAYER_SOLANA_ADDRESS = "4XJ4Mrkn8Jn8vaJKxmUQWSKHQdwaDiKsDDxeNexodiEq";
 // Note: We need the ABI for OmegaBridge. 
 // Since we are in the UI folder, we can hardcode the minimal ABI or import. 
 // For simplicity in this demo, I'll inline the minimal ABI.
-const OMEGA_BRIDGE_ADDRESS = "0x66e5BaCbf34974fEfdd9d7DB5bA07df0Bfd4591f";
-const OMEGA_RPC_URL = "https://0x4e454228.rpc.aurora-cloud.dev";
-const OMEGA_CHAIN_ID = 1313161768;
+const OMEGA_BRIDGE_ADDRESS = "0xdC43DCAE0c13f11f425cAB7240A035137B2f6f6F";
+const OMEGA_RPC_URL = "https://0x4e4542bc.rpc.aurora-cloud.dev/";
+const OMEGA_CHAIN_ID = 1313161916;
 
 const OmegaBridgeABI = [
   "function lock(string memory solanaAddress) external payable",
@@ -139,7 +139,7 @@ function App() {
       // Keep old NFTs visible while fetching (caching)
 
       try {
-        const OMEGA_RPC = "https://0x4e454228.rpc.aurora-cloud.dev";
+        const OMEGA_RPC = "https://0x4e4542bc.rpc.aurora-cloud.dev/";
         
         // Helper to make raw JSON-RPC calls
         const rpcCall = async (method, params) => {
@@ -174,8 +174,8 @@ function App() {
         const encodeTokenCounter = () => '0xd082e381';
 
         const contracts = [
-          { addr: "0x0c33763995A6eC29D07317A8F4Eb37E338C5C4D3", name: "Solar Sentries" },
-          { addr: "0xc4adBE5BfF256c54f2fd6b906B4cfA407Af8a05E", name: "Secret Serpent Society" }
+          { addr: "0xf5d3107F16127272ADd8d6e6623A9B5bB9dE7aC4", name: "Solar Sentries" },
+          { addr: "0x387f12f5099B1fB1c927dcaE64048b69092FD953", name: "Secret Serpent Society" }
         ];
 
         let found = [];

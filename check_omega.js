@@ -1,7 +1,7 @@
 const { JsonRpcProvider } = require('ethers');
 
 async function checkChain() {
-    const rpcUrl = "https://0x4e454228.rpc.aurora-cloud.dev";
+    const rpcUrl = "https://0x4e4542bc.rpc.aurora-cloud.dev/";
     const provider = new JsonRpcProvider(rpcUrl);
 
     try {

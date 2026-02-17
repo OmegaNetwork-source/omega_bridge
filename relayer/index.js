@@ -64,7 +64,7 @@ http.createServer((req, res) => {
 // --- Configuration ---
 const SOLANA_RPC = 'https://api.devnet.solana.com';
 const SOLANA_RPC_MAINNET = "https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082";
-const OMEGA_RPC = "https://0x4e454228.rpc.aurora-cloud.dev"; // Omega Network RPC
+const OMEGA_RPC = "https://0x4e4542bc.rpc.aurora-cloud.dev/"; // Omega Network RPC
 const OMEGA_PK = process.env.OMEGA_PRIVATE_KEY;
 
 // Load Keys

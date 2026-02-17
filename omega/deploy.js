@@ -2,10 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const solc = require('solc');
 const { ethers, JsonRpcProvider, Wallet, ContractFactory } = require('ethers');
+require('dotenv').config({ path: path.resolve(__dirname, '../relayer/.env') });
 
 // --- Configuration ---
-const RPC_URL = "https://0x4e454228.rpc.aurora-cloud.dev";
-const PRIVATE_KEY = process.env.PRIVATE_KEY || "YOUR_PRIVATE_KEY_HERE";
+const RPC_URL = "https://0x4e4542bc.rpc.aurora-cloud.dev/";
+const PRIVATE_KEY = process.env.OMEGA_PRIVATE_KEY;
 // ---------------------
 
 async function main() {
@@ -60,10 +61,7 @@ async function main() {
 
     console.log("Compilation Successful.");
 
-    if (PRIVATE_KEY === "YOUR_PRIVATE_KEY_HERE") {
-        console.warn("Please set your PRIVATE_KEY in the script or environment variables to deploy.");
-        return;
-    }
+
 
     console.log("Deploying to Omega Network...");
     const provider = new JsonRpcProvider(RPC_URL);

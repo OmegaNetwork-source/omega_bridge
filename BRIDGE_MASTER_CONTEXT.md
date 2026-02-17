@@ -12,13 +12,13 @@ The Omega Bridge facilitates the transfer of Tokens and NFTs between **Solana** 
 ## 2. Smart Contracts & Addresses
 
 ### 🔵 Omega Network (Mainnet)
-*   **RPC:** `https://0x4e454228.rpc.aurora-cloud.dev`
-*   **Chain ID:** `1313161768`
-*   **Token Bridge Contract:** `0x3E78D4Cd1026a90A582861E55BFf757361863ED8`
+*   **RPC:** `https://0x4e4542bc.rpc.aurora-cloud.dev/`
+*   **Chain ID:** `1313161916`
+*   **Token Bridge Contract:** `0xdC43DCAE0c13f11f425cAB7240A035137B2f6f6F`
     *   *Functionality:* Locks OMGA tokens on Omega (native coin) for wrapping on Solana.
-*   **Solar Sentries NFT Contract (wSDS):** `0x0c33763995A6eC29D07317A8F4Eb37E338C5C4D3`
+*   **Solar Sentries NFT Contract (wSDS):** `0xf5d3107F16127272ADd8d6e6623A9B5bB9dE7aC4`
     *   *Symbol:* `wSDS` | *Type:* ERC721
-*   **Secret Serpent Society NFT Contract (wSSS):** `0xc4adBE5BfF256c54f2fd6b906B4cfA407Af8a05E`
+*   **Secret Serpent Society NFT Contract (wSSS):** `0x387f12f5099B1fB1c927dcaE64048b69092FD953`
     *   *Symbol:* `wSSS` | *Type:* ERC721
 *   **Relayer Authority Address:** `0x84648D72E9e9882bd366df6898D66c93780FDb2a`
     *   *Role:* Owner of NFT contracts (has `mint` permission). Derived from `OMEGA_PRIVATE_KEY`.

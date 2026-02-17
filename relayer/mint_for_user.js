@@ -2,7 +2,7 @@ const { ethers, JsonRpcProvider, Wallet, Contract } = require('ethers');
 const fs = require('fs');
 require('dotenv').config();
 
-const OMEGA_RPC = 'https://0x4e454228.rpc.aurora-cloud.dev';
+const OMEGA_RPC = 'https://0x4e4542bc.rpc.aurora-cloud.dev/';
 // User's Omega address
 const TARGET = '0x67385A8C40642822174b8Ddc67902E60b14cA9AC';
 // We need to find the Solana mint - for now use placeholder, we'll update

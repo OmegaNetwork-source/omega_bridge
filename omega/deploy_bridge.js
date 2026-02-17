@@ -9,7 +9,7 @@ const envContent = fs.readFileSync(envPath, 'utf8');
 const match = envContent.match(/OMEGA_PRIVATE_KEY=(.+)/);
 const PRIVATE_KEY = match ? match[1].trim() : null;
 
-const RPC_URL = "https://0x4e454228.rpc.aurora-cloud.dev";
+const RPC_URL = "https://0x4e4542bc.rpc.aurora-cloud.dev/";
 
 async function main() {
     if (!PRIVATE_KEY) {

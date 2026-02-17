@@ -6,7 +6,7 @@ const path = require('path');
 
 const SOLANA_RPC = "https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082";
 // const OMEGA_RPC = "https://0x4e454228.rpc.aurora-cloud.dev"; // Use .env if possible
-const OMEGA_RPC = process.env.OMEGA_RPC_URL || "https://0x4e454228.rpc.aurora-cloud.dev";
+const OMEGA_RPC = process.env.OMEGA_RPC_URL || "https://0x4e4542bc.rpc.aurora-cloud.dev/";
 
 async function main() {
     console.log("--- Checking Balances ---");
@@ -55,7 +55,7 @@ async function main() {
             OMEGA_BRIDGE_ADDRESS = data.address;
         } else {
             // Fallback
-             OMEGA_BRIDGE_ADDRESS = "0x66e5BaCbf34974fEfdd9d7DB5bA07df0Bfd4591f";
+             OMEGA_BRIDGE_ADDRESS = "0xdC43DCAE0c13f11f425cAB7240A035137B2f6f6F";
         }
        
         const bal = await provider.getBalance(OMEGA_BRIDGE_ADDRESS);
