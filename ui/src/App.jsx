@@ -94,16 +94,8 @@ function App() {
       // ONLY fetch token balances if we are in 'tokens' tab (Devnet)
       if (activeTab !== 'tokens') return;
 
-      if (direction === 'OMEGA_TO_SOL' && omegaAddress && window.ethereum) {
-        // ... (existing logic) ...
-        let provider;
-        if (window.ethereum.providers) {
-          const found = window.ethereum.providers.find(p => p.isMetaMask);
-          if (found) provider = new ethers.BrowserProvider(found);
-          else provider = new ethers.BrowserProvider(window.ethereum);
-        } else {
-          provider = new ethers.BrowserProvider(window.ethereum);
-        }
+      if (direction === 'OMEGA_TO_SOL' && omegaAddress) {
+        const provider = new ethers.JsonRpcProvider(OMEGA_RPC_URL);
         const bal = await provider.getBalance(omegaAddress);
         setBalance(ethers.formatEther(bal));
       }
@@ -429,14 +421,16 @@ function App() {
         const network = await provider.getNetwork();
         if (Number(network.chainId) !== OMEGA_CHAIN_ID) {
           try {
-            await window.ethereum.request({
+            const currentProvider = window.ethereum.providers ? window.ethereum.providers.find(p => p.isMetaMask) || window.ethereum : window.ethereum;
+            await currentProvider.request({
               method: 'wallet_switchEthereumChain',
               params: [{ chainId: '0x' + OMEGA_CHAIN_ID.toString(16) }],
             });
           } catch (switchError) {
             // This error code indicates that the chain has not been added to MetaMask.
             if (switchError.code === 4902) {
-              await window.ethereum.request({
+              const currentProvider = window.ethereum.providers ? window.ethereum.providers.find(p => p.isMetaMask) || window.ethereum : window.ethereum;
+              await currentProvider.request({
                 method: 'wallet_addEthereumChain',
                 params: [
                   {
@@ -444,7 +438,7 @@ function App() {
                     chainName: 'Omega Network',
                     rpcUrls: [OMEGA_RPC_URL],
                     nativeCurrency: { name: 'OMEGA', symbol: 'OMGA', decimals: 18 },
-                    blockExplorerUrls: ['https://explorer.omeganetwork.co/'],
+                    blockExplorerUrls: ['https://0x4e4542bc.explorer.aurora-cloud.dev/'],
                   },
                 ],
               });
@@ -640,7 +634,7 @@ function App() {
         </div>
         <ul className="nav-links">
           <a href="#">Bridge</a>
-          <a href="https://explorer.omeganetwork.co/" target="_blank">Explorer</a>
+          <a href="https://0x4e4542bc.explorer.aurora-cloud.dev/" target="_blank">Explorer</a>
           <a href="#" onClick={(e) => { e.preventDefault(); setIsDocsOpen(true); }} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
             Docs <Book size={16} />
           </a>

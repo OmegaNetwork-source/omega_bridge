@@ -3,7 +3,7 @@ const { mintTo, getOrCreateAssociatedTokenAccount } = require('@solana/spl-token
 const fs = require('fs');
 const path = require('path');
 
-const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+const connection = new Connection('https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082', 'confirmed');
 
 async function main() {
     const args = process.argv.slice(2);

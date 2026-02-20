@@ -62,7 +62,7 @@ http.createServer((req, res) => {
 }).listen(PORT, () => console.log(`Health check server on port ${PORT}`));
 
 // --- Configuration ---
-const SOLANA_RPC = 'https://api.devnet.solana.com';
+const SOLANA_RPC = "https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082";
 const SOLANA_RPC_MAINNET = "https://mainnet.helius-rpc.com/?api-key=94a04704-448e-45a8-82e5-8f4c63b25082";
 const OMEGA_RPC = "https://0x4e4542bc.rpc.aurora-cloud.dev/"; // Omega Network RPC
 const OMEGA_PK = process.env.OMEGA_PRIVATE_KEY;
